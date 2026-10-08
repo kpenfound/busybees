@@ -155,8 +155,10 @@ profile_by_size = { l = "fresh" }
 		t.Fatalf("expected brief and angles, got %d sessions", len(sessions))
 	}
 	for _, s := range sessions {
-		if modelOf(s.Args) != "fresh-model" || !strings.Contains(strings.Join(s.Args, " "), "exec") {
-			t.Errorf("%s did not select the fresh codex profile: %v", s.Kind, s.Args)
+		// The brief and angles are restricted turns: their model travels
+		// on thread/start, not the command line.
+		if s.Model != "fresh-model" || len(s.Args) == 0 || s.Args[0] != "app-server" {
+			t.Errorf("%s did not select the fresh codex profile: %v (model %q)", s.Kind, s.Args, s.Model)
 		}
 	}
 	// The judge, unlike the brief and the angles, has the built-in MCP

@@ -23,14 +23,18 @@ import (
 // reviewSession is one brief or angle session the fake CLI recorded
 // (fakeReviewSession): the kind ("brief", or the angle's title), the
 // command line, the directory it ran in and the files there, the BEES_ROLE
-// it saw, and its prompt.
+// it saw, its prompt, and — for a codex session, from fakeCodexReviewAppServer
+// — the model and sandbox thread/start carried, since those travel in the
+// protocol rather than on the command line.
 type reviewSession struct {
-	Kind   string   `json:"kind"`
-	Args   []string `json:"args"`
-	Dir    string   `json:"dir"`
-	Files  []string `json:"files"`
-	Role   string   `json:"role"`
-	Prompt string   `json:"prompt"`
+	Kind    string   `json:"kind"`
+	Args    []string `json:"args"`
+	Dir     string   `json:"dir"`
+	Files   []string `json:"files"`
+	Role    string   `json:"role"`
+	Prompt  string   `json:"prompt"`
+	Model   string   `json:"model"`
+	Sandbox string   `json:"sandbox"`
 }
 
 // reviewLogPath points FAKE_REVIEW_LOG at a file for the test, and returns
@@ -323,9 +327,9 @@ func TestAReviewFallsBackToTheRolesModelAndAngles(t *testing.T) {
 	}
 }
 
-// A codex reviewer's brief and angle sessions run `codex exec` in its
+// A codex reviewer's brief and angle sessions run `codex app-server` in its
 // read-only sandbox, as `bees review` runs them, and the review completes
-// from codex's event stream.
+// from its JSON-RPC notifications.
 func TestACodexReviewerRunsTheReviewSessionsReadOnly(t *testing.T) {
 	logPath := reviewLogPath(t)
 	h := newHarness(t, devOnlyTOML+"[roles.reviewer]\nagent = \"codex\"\nmodel = \"o3\"\n")
@@ -339,8 +343,9 @@ func TestACodexReviewerRunsTheReviewSessionsReadOnly(t *testing.T) {
 	}
 	for _, s := range sessions {
 		line := strings.Join(s.Args, " ")
-		if !strings.HasPrefix(line, "exec --json --sandbox read-only") || !strings.Contains(line, "--model o3") {
-			t.Errorf("the %s session ran %q, want codex exec read-only with the role's model", s.Kind, line)
+		if len(s.Args) == 0 || s.Args[0] != "app-server" || !strings.Contains(line, "features.shell_tool=false") ||
+			s.Model != "o3" || s.Sandbox != "read-only" {
+			t.Errorf("the %s session ran %q (model %q, sandbox %q), want codex app-server read-only with the role's model", s.Kind, line, s.Model, s.Sandbox)
 		}
 	}
 	if !strings.Contains(promptOf(t, h, 1), "### quick general: Widget does nothing") {
@@ -728,7 +733,7 @@ max_turns = 19
 	for kind, wants := range map[string][]string{
 		"brief":                  {"--model brief", "--fallback-model brief-fallback", "--effort high", "--max-turns 19", "--strict-mcp-config", "--tools Read,Grep,Glob,LS,NotebookRead"},
 		"general":                {"--model sized", "--fallback-model sized-fallback", "--effort medium", "--strict-mcp-config"},
-		"documentation accuracy": {"exec --json --sandbox read-only", "--model docs", `model_reasoning_effort="high"`, "features.shell_tool=false", `web_search="disabled"`},
+		"documentation accuracy": {"app-server", `model_reasoning_effort="high"`, "features.shell_tool=false", `web_search="disabled"`},
 	} {
 		line := strings.Join(got[kind].Args, " ")
 		for _, want := range wants {
@@ -739,6 +744,11 @@ max_turns = 19
 		if strings.Contains(line, "dangerously") || strings.Contains(line, "mcp_servers.bees") || got[kind].Role != "" {
 			t.Errorf("%s gained factory permissions: %+v", kind, got[kind])
 		}
+	}
+	// The docs angle's model and sandbox travel on thread/start rather than
+	// on codex's command line.
+	if docs := got["documentation accuracy"]; docs.Model != "docs" || docs.Sandbox != "read-only" {
+		t.Errorf("documentation accuracy thread/start: model %q, sandbox %q", docs.Model, docs.Sandbox)
 	}
 	judgeArgs := argsOfNamed(t, h, "reviewer-pr-201-r1")
 	judge := strings.Join(judgeArgs, " ")

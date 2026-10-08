@@ -33,13 +33,15 @@ import (
 
 // TestMain lets the test binary double as a fake `claude` — and a fake
 // `codex`, `opencode` or `pi`, which it tells apart by its first arguments,
-// codex's `exec`, opencode's `run` or pi's `-p --mode` — when FAKE_CLAUDE is
-// set: the runner executes it, it inspects its role and environment,
-// performs a scripted action and prints a stream-json result, or codex's,
-// opencode's or pi's event stream when it is one of those. `codex app-server`
+// opencode's `run` or pi's `-p --mode` — when FAKE_CLAUDE is set: the
+// runner executes it, it inspects its role and environment, performs a
+// scripted action and prints a stream-json result, or opencode's or pi's
+// event stream when it is one of those. `codex app-server`
 // (os.Args[1] == "app-server") is answered as its own long-lived JSON-RPC
-// conversation instead, by fakeCodexAppServer: an ordinary or ToolsAll codex
-// turn runs one, while a held or restricted turn still runs `codex exec`.
+// conversation instead: an ordinary, ToolsAll or held turn's by
+// fakeCodexAppServer, driven by its role and environment the way the other
+// backends are, and a restricted turn's (a review pipeline session) by
+// fakeCodexReviewAppServer, driven by turn/start's input instead.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
@@ -128,97 +130,55 @@ func fakeAssemble(sessionDir, stateDir string, git func(args ...string), fail fu
 // anchor to.
 const fakeDiff = "diff --git a/widget.go b/widget.go\n--- a/widget.go\n+++ b/widget.go\n@@ -1,2 +1,3 @@\n package widgets\n+func Widget() {}\n"
 
-// isReviewSession tells a brief or angle session of the review pipeline
-// (internal/review's CLIAgent, run through shared restricted execution) from a factory
-// session: claude's is asked for `--output-format json` where the runner
-// asks for stream-json, and codex's runs in its read-only sandbox where the
-// runner bypasses it.
 // isReviewSession reports whether this process was started as a review
 // pipeline session — the brief, an angle, a grader or a triage session —
 // through the shared restricted execution. Claude is held to empty setting
-// sources, codex to its read-only sandbox, opencode to its pure mode and
-// pi to its read-only tool set; an ordinary session carries none of those.
+// sources, codex to the restricted feature set `codex app-server` carries
+// on its command line (codexRestrictedConfigArgs), opencode to its pure
+// mode and pi to its read-only tool set; an ordinary session carries none
+// of those.
 func isReviewSession() bool {
 	switch {
 	case slices.Contains(os.Args, "--setting-sources"),
-		slices.Contains(os.Args, "--no-tools"):
+		slices.Contains(os.Args, "--no-tools"),
+		slices.Contains(os.Args, "features.shell_tool=false"):
 		return true
-	case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"),
-		len(os.Args) > 1 && os.Args[1] == "--pure":
+	case len(os.Args) > 1 && os.Args[1] == "--pure":
 		return true
 	}
 	return false
 }
 
-// fakeReviewSession is the fake distiller or angle session. It reads its
-// prompt from stdin, tells the two apart by the prompt's last line (the
-// distiller's asks for the brief, an angle's names the angle), records the
-// session in the file FAKE_REVIEW_LOG names when it is set — one JSON line
-// per session: the kind, the command line and the directory it ran in —
-// and answers as the CLI it was started as: claude's result object, or
-// codex's event stream.
+// fakeReviewSession is the fake distiller or angle session: claude's,
+// opencode's and pi's read their prompt from stdin and answer in their own
+// stream format, the way this function always has; codex's `codex
+// app-server` conversation is driven by fakeCodexReviewAppServer instead,
+// because its prompt arrives as turn/start's input rather than on stdin,
+// and its answer and failure go as JSON-RPC notifications rather than a
+// stream line or a nonzero exit.
 //
-// The brief sizes the change FAKE_REVIEW_SIZE, "s" when unset. Each angle
-// reports one finding, titled after the angle so the judge keeps them all
-// apart, unless FAKE_REVIEW_EMPTY is set; FAKE_ANGLE_FAIL names an angle
-// (its prompt title, "documentation accuracy"), or "all", whose session
-// dies instead.
+// Either way the prompt is told apart by its last line (the distiller's
+// asks for the brief, an angle's names the angle; fakeReviewAnswer does
+// this for both). The brief sizes the change FAKE_REVIEW_SIZE, "s" when
+// unset. Each angle reports one finding, titled after the angle so the
+// judge keeps them all apart, unless FAKE_REVIEW_EMPTY is set;
+// FAKE_ANGLE_FAIL names an angle (its prompt title, "documentation
+// accuracy"), or "all", whose session dies instead.
 func fakeReviewSession() {
+	if len(os.Args) > 1 && os.Args[1] == "app-server" {
+		fakeCodexReviewAppServer()
+		return
+	}
 	prompt, _ := io.ReadAll(os.Stdin)
-	lines := strings.Split(strings.TrimSpace(string(prompt)), "\n")
-	last := lines[len(lines)-1]
-	kind := "brief"
-	if _, after, ok := strings.Cut(last, "from the "); ok {
-		kind, _, _ = strings.Cut(after, " angle")
-	}
-	if p := os.Getenv("FAKE_REVIEW_LOG"); p != "" {
-		dir, _ := os.Getwd()
-		var files []string
-		if entries, err := os.ReadDir(dir); err == nil {
-			for _, e := range entries {
-				files = append(files, e.Name())
-			}
-		}
-		rec, _ := json.Marshal(map[string]any{"kind": kind, "args": os.Args[1:], "dir": dir, "files": files, "role": os.Getenv(session.EnvRole), "prompt": string(prompt)})
-		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "fake review session:", err)
-			os.Exit(2)
-		}
-		_, _ = f.Write(append(rec, '\n'))
-		_ = f.Close()
-	}
-	if fail := os.Getenv("FAKE_ANGLE_FAIL"); kind != "brief" && (fail == kind || fail == "all") {
+	kind, answer, ok := fakeReviewAnswer(string(prompt), "", "")
+	if !ok {
 		fmt.Fprintln(os.Stderr, "fake review session: the model is overloaded")
 		os.Exit(1)
 	}
-	var answer string
-	if kind == "brief" {
-		size := os.Getenv("FAKE_REVIEW_SIZE")
-		if size == "" {
-			size = "s"
-		}
-		answer = fmt.Sprintf(`{"summary":"Adds the widget.","size":%q,"acceptance_criteria":[{"text":"a widget exists","source":"#1"}],"touched_areas":[{"name":"widgets","paths":["widget.go"],"summary":"adds Widget"}]}`, size)
-	} else if os.Getenv("FAKE_REVIEW_EMPTY") == "1" {
-		answer = `{"findings":[]}`
-	} else {
-		// Anchored to a line of its own per angle (the length of the
-		// angle's title), so the judge does not fold two angles' findings
-		// into one.
-		answer = fmt.Sprintf(`{"findings":[{"category":"correctness","severity":"medium","file":"widget.go","lines":[%d,%d],"side":"new","title":"%s: Widget does nothing","body":"Widget has an empty body (from the %s angle).","evidence":"func Widget() {}"}]}`, len(kind), len(kind), kind, kind)
-	}
 	// The session answers in its own backend's stream format: the fake is
-	// started as claude, codex, opencode or pi, whichever the reviewer's
+	// started as claude, opencode or pi, whichever the reviewer's
 	// configuration selects, and the shared execution reads each its way.
 	switch {
-	case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"):
-		for _, ev := range []string{
-			`{"type":"thread.started","thread_id":"thread-` + kind + `"}`,
-			`{"type":"item.completed","item":{"type":"agent_message","text":` + strconv.Quote(answer) + `}}`,
-			`{"type":"turn.completed"}`,
-		} {
-			fmt.Println(ev)
-		}
 	case len(os.Args) > 1 && os.Args[1] == "--pure":
 		for _, ev := range []string{
 			`{"type":"text","sessionID":"` + kind + `","part":{"type":"text","text":` + strconv.Quote(answer) + `}}`,
@@ -236,6 +196,133 @@ func fakeReviewSession() {
 		}
 	default:
 		fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%s,"session_id":"sid-review-%s","num_turns":1,"total_cost_usd":0.25}`+"\n", strconv.Quote(answer), kind)
+	}
+}
+
+// fakeReviewAnswer computes one review-pipeline session's answer from its
+// prompt — the kind told apart by the prompt's last line, and the JSON a
+// backend's result carries — and reports FAKE_REVIEW_LOG's record when the
+// caller set one. model and sandbox are thread/start's own parameters, for
+// a codex session (fakeCodexReviewAppServer): codex's model and sandbox
+// travel in the protocol rather than on the command line, unlike every
+// other backend's, so the log carries them next to args rather than
+// leaving a reader of args to find them there. ok is false when
+// FAKE_ANGLE_FAIL names this angle (or "all"), the one case a review
+// session dies instead of answering.
+func fakeReviewAnswer(prompt, model, sandbox string) (kind, answer string, ok bool) {
+	lines := strings.Split(strings.TrimSpace(prompt), "\n")
+	last := lines[len(lines)-1]
+	kind = "brief"
+	if _, after, cut := strings.Cut(last, "from the "); cut {
+		kind, _, _ = strings.Cut(after, " angle")
+	}
+	if p := os.Getenv("FAKE_REVIEW_LOG"); p != "" {
+		dir, _ := os.Getwd()
+		var files []string
+		if entries, err := os.ReadDir(dir); err == nil {
+			for _, e := range entries {
+				files = append(files, e.Name())
+			}
+		}
+		rec, _ := json.Marshal(map[string]any{"kind": kind, "args": os.Args[1:], "dir": dir, "files": files, "role": os.Getenv(session.EnvRole), "prompt": prompt, "model": model, "sandbox": sandbox})
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake review session:", err)
+			os.Exit(2)
+		}
+		_, _ = f.Write(append(rec, '\n'))
+		_ = f.Close()
+	}
+	if fail := os.Getenv("FAKE_ANGLE_FAIL"); kind != "brief" && (fail == kind || fail == "all") {
+		return kind, "", false
+	}
+	if kind == "brief" {
+		size := os.Getenv("FAKE_REVIEW_SIZE")
+		if size == "" {
+			size = "s"
+		}
+		answer = fmt.Sprintf(`{"summary":"Adds the widget.","size":%q,"acceptance_criteria":[{"text":"a widget exists","source":"#1"}],"touched_areas":[{"name":"widgets","paths":["widget.go"],"summary":"adds Widget"}]}`, size)
+	} else if os.Getenv("FAKE_REVIEW_EMPTY") == "1" {
+		answer = `{"findings":[]}`
+	} else {
+		// Anchored to a line of its own per angle (the length of the
+		// angle's title), so the judge does not fold two angles' findings
+		// into one.
+		answer = fmt.Sprintf(`{"findings":[{"category":"correctness","severity":"medium","file":"widget.go","lines":[%d,%d],"side":"new","title":"%s: Widget does nothing","body":"Widget has an empty body (from the %s angle).","evidence":"func Widget() {}"}]}`, len(kind), len(kind), kind, kind)
+	}
+	return kind, answer, true
+}
+
+// fakeCodexReviewAppServer speaks `codex app-server`'s JSON-RPC
+// conversation for one review pipeline session: initialize, thread/start
+// (whose model and sandbox it keeps for the log, since they travel in the
+// protocol rather than on the command line), then turn/start, whose input
+// carries the prompt fakeReviewAnswer reads off stdin for every other
+// backend. The answer goes as item/completed and turn/completed
+// notifications; FAKE_ANGLE_FAIL instead sends an "error" notification,
+// the JSON-RPC counterpart of the nonzero exit the other backends' fakes
+// die with. It exits once bees closes stdin, as the real app server does.
+func fakeCodexReviewAppServer() {
+	enc := json.NewEncoder(os.Stdout)
+	send := func(v map[string]any) {
+		if err := enc.Encode(v); err != nil {
+			fmt.Fprintln(os.Stderr, "fake codex app-server:", err)
+			os.Exit(2)
+		}
+	}
+	respond := func(id json.RawMessage, result map[string]any) {
+		send(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	}
+	notify := func(method string, params map[string]any) {
+		send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+	}
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
+	var model, sandbox string
+	for sc.Scan() {
+		var msg struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if json.Unmarshal(sc.Bytes(), &msg) != nil {
+			continue
+		}
+		switch msg.Method {
+		case "initialize":
+			respond(msg.ID, map[string]any{"serverInfo": map[string]any{"name": "codex", "version": "0.0.0-fake"}})
+		case "initialized":
+			// A notification the client sends once it has the initialize
+			// result; it carries no id and wants no answer.
+		case "thread/start", "thread/resume":
+			var p struct {
+				Model   string `json:"model"`
+				Sandbox string `json:"sandbox"`
+			}
+			_ = json.Unmarshal(msg.Params, &p)
+			model, sandbox = p.Model, p.Sandbox
+			respond(msg.ID, map[string]any{"thread": map[string]any{"id": fakeCodexThreadID}})
+		case "turn/start":
+			var p struct {
+				Input string `json:"input"`
+			}
+			_ = json.Unmarshal(msg.Params, &p)
+			respond(msg.ID, map[string]any{"turn": map[string]any{"id": "fake-turn"}})
+			_, answer, ok := fakeReviewAnswer(p.Input, model, sandbox)
+			if !ok {
+				notify("error", map[string]any{"message": "the model is overloaded"})
+				return
+			}
+			notify("item/completed", map[string]any{"item": map[string]any{"type": "agent_message", "text": answer}})
+			notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
+		default:
+			// Every other request bees might send gets a generic result
+			// rather than being left pending; a notification with no id
+			// and no id-bearing answer is simply read and dropped.
+			if msg.ID != nil {
+				respond(msg.ID, map[string]any{})
+			}
+		}
 	}
 }
 
@@ -283,21 +370,18 @@ func fakeClaude() {
 		fmt.Fprintln(os.Stderr, "fake claude:", err)
 		os.Exit(2)
 	}
-	// The runner starts codex as `codex exec --json ...` and opencode as
-	// `opencode run --format json ...`; claude never gets either. A codex or
-	// opencode session prints its own events instead of claude's
-	// stream-json, and the runner reads each stream its own way.
-	codex := len(os.Args) > 1 && os.Args[1] == "exec"
+	// The runner starts opencode as `opencode run --format json ...` and
+	// codex as `codex app-server`, a JSON-RPC conversation over its own
+	// stdin and stdout (appServer, below) rather than a prompt followed by
+	// one stream; claude never gets either. An opencode session prints its
+	// own events instead of claude's stream-json, and the runner reads each
+	// stream its own way.
 	opencode := len(os.Args) > 1 && os.Args[1] == "run"
 	pi := len(os.Args) > 2 && os.Args[1] == "-p" && os.Args[2] == "--mode"
-	// appServer is `codex app-server`: a JSON-RPC conversation over
-	// stdin/stdout rather than a prompt followed by one stream, so its
-	// stdin is read as the conversation instead of discarded.
 	appServer := len(os.Args) > 1 && os.Args[1] == "app-server"
-	if codex || opencode || pi {
-		// The prompt is on stdin for codex, opencode and pi; claude reads
-		// it there too, but only those close with an error when it is left
-		// unread.
+	if opencode || pi {
+		// The prompt is on stdin for opencode and pi; claude reads it there
+		// too, but only those close with an error when it is left unread.
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
 	if pi {
@@ -444,7 +528,7 @@ func fakeClaude() {
 	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
 		fail(err)
 	}
-	fakeAgentStream(codex, pi, opencode, sessionID)
+	fakeAgentStream(pi, opencode, sessionID)
 }
 
 // runFakeRole performs the scripted action FAKE_* environment variables
@@ -694,11 +778,13 @@ func runFakeRole(role, sessionID, sessionDir, stateDir string, box *mail.Box, fa
 	return outcome
 }
 
-// fakeAgentStream prints the single-shot stream codex's `exec`, pi or
-// opencode report their result through, or claude's result event when none
-// of them ran. FAKE_COST and FAKE_RESULT_TEXT steer the cost and result
-// text every backend's stream carries.
-func fakeAgentStream(codex, pi, opencode bool, sessionID string) {
+// fakeAgentStream prints the single-shot stream pi or opencode report
+// their result through, or claude's result event when neither ran: codex
+// never reaches this function, since it always runs as `codex app-server`
+// (fakeCodexAppServer), answered before fakeAgentStream is called. FAKE_COST
+// and FAKE_RESULT_TEXT steer the cost and result text every backend's
+// stream carries.
+func fakeAgentStream(pi, opencode bool, sessionID string) {
 	fail := func(err error) {
 		fmt.Fprintln(os.Stderr, "fake claude:", err)
 		os.Exit(2)
@@ -718,16 +804,6 @@ func fakeAgentStream(codex, pi, opencode bool, sessionID string) {
 	text := "ok"
 	if v := os.Getenv("FAKE_RESULT_TEXT"); v != "" {
 		text = v
-	}
-	if codex {
-		// Two completed items are the two turns claude's result reports,
-		// so a test's turn count holds whichever agent ran; there is no
-		// cost to report.
-		fmt.Println(`{"type":"thread.started","thread_id":"fake-thread"}`)
-		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"mcp_tool_call","server":"bees","tool":"done","status":"completed"}}`)
-		fmt.Printf(`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":%q}}`+"\n", text)
-		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2}}`)
-		return
 	}
 	if pi {
 		// Two ended turns are the two turns, the first a response that

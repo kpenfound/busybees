@@ -70,14 +70,15 @@ func TestMain(m *testing.M) {
 // isReviewSession reports whether this process was started as a read-only
 // session through the shared restricted execution — a grader, or the review
 // pipeline's brief or one of its angles: claude is held to empty setting
-// sources, codex to its read-only sandbox, opencode to its pure mode and pi
-// to its read-only tool set. An ordinary role session carries none of those.
+// sources, opencode to its pure mode and pi to its read-only tool set. An
+// ordinary role session carries none of those. Codex, restricted or not,
+// always runs as `codex app-server`, so fakeClaude dispatches it to
+// fakeCodexAppServer before this check is ever reached; that function
+// tells a review session apart by thread/start's sandbox instead.
 func isReviewSession() bool {
 	switch {
 	case slices.Contains(os.Args, "--setting-sources"),
-		slices.Contains(os.Args, "--no-tools"):
-		return true
-	case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"),
+		slices.Contains(os.Args, "--no-tools"),
 		len(os.Args) > 1 && os.Args[1] == "--pure":
 		return true
 	}
@@ -137,14 +138,6 @@ func fakeClaude() {
 		prompt, _ := io.ReadAll(os.Stdin)
 		answer := reviewAnswer(string(prompt))
 		switch {
-		case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"):
-			for _, ev := range []string{
-				`{"type":"thread.started","thread_id":"thread-review"}`,
-				`{"type":"item.completed","item":{"type":"agent_message","text":` + strconv.Quote(answer) + `}}`,
-				`{"type":"turn.completed"}`,
-			} {
-				fmt.Println(ev)
-			}
 		case len(os.Args) > 1 && os.Args[1] == "--pure":
 			for _, ev := range []string{
 				`{"type":"text","sessionID":"open-review","part":{"type":"text","text":` + strconv.Quote(answer) + `}}`,
@@ -349,7 +342,7 @@ func fakeCodexAppServer(fail func(error)) {
 			}
 			send(map[string]any{"jsonrpc": "2.0", "method": "item/completed",
 				"params": map[string]any{"item": map[string]any{"type": "agent_message", "text": text}}})
-			send(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{"status": "completed"}})
+			send(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{"turn": map[string]any{"status": "completed"}}})
 		default:
 			if len(msg.ID) > 0 {
 				send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32601, "message": "method not supported in this fake"}})

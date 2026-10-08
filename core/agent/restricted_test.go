@@ -18,11 +18,6 @@ import (
 
 const restrictedClaudeAnswer = `echo '{"type":"result","subtype":"success","is_error":false,"result":"the brief","session_id":"sess-1","num_turns":3,"total_cost_usd":0.5}'`
 
-const restrictedCodexAnswer = `echo '{"type":"thread.started","thread_id":"thread-9"}'
-echo '{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"the brief"}}'
-echo '{"type":"turn.completed"}'`
-
 const restrictedOpenCodeAnswer = `echo '{"type":"text","sessionID":"open-7","part":{"type":"text","text":"the brief"}}'
 echo '{"type":"step_finish","sessionID":"open-7","part":{"type":"step-finish","reason":"stop","cost":0.25}}'`
 
@@ -62,6 +57,38 @@ func restrictedArgs(t *testing.T, record, suffix string) []string {
 func restrictedRunner(t *testing.T, claude, codex string) *Runner {
 	t.Helper()
 	return &Runner{ClaudeBin: claude, CodexBin: codex, SessionsDir: t.TempDir(), EnvironmentPrefix: "BEES_"}
+}
+
+// restrictedCodexScript fills in the scripted `codex app-server`
+// conversation a restricted codex test runs by default when it does not
+// need to script its own: thread-9, a reasoning item, an agent message
+// "the brief", and a completed turn.
+func restrictedCodexScript(s agenttest.CodexAppServerScript) agenttest.CodexAppServerScript {
+	if s.ThreadID == "" {
+		s.ThreadID = "thread-9"
+	}
+	if s.Actions == nil {
+		s.Actions = []agenttest.CodexAppServerAction{
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "reasoning", "text": "thinking"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agent_message", "text": "the brief"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
+		}
+	}
+	return s
+}
+
+// restrictedCodexStart finds the fake codex app-server's invocation whose
+// first argument is first ("app-server" or "mcp") and returns its argv and
+// environment: a restricted turn starts the fake twice, once for each.
+func restrictedCodexStart(t *testing.T, rec agenttest.CodexAppServerRecord, first string) (argv, env []string) {
+	t.Helper()
+	for i, a := range rec.Argv {
+		if len(a) > 1 && a[1] == first {
+			return a, rec.Env[i]
+		}
+	}
+	t.Fatalf("no %q invocation recorded: %v", first, rec.Argv)
+	return nil, nil
 }
 
 // restrictedOpenCodeFake stands in for the opencode binary, answering the
@@ -147,7 +174,7 @@ func TestRunRestrictedUsesTheSharedClaudeBackend(t *testing.T) {
 }
 
 func TestRunRestrictedUsesTheSharedCodexBackend(t *testing.T) {
-	bin, record := restrictedFake(t, "codex", restrictedCodexAnswer)
+	bin, record := agenttest.CodexAppServer(t, restrictedCodexScript(agenttest.CodexAppServerScript{}))
 	res, err := restrictedRunner(t, "", bin).RunRestricted(context.Background(), restrictedRequestFor(AgentCodex, t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
@@ -155,16 +182,23 @@ func TestRunRestrictedUsesTheSharedCodexBackend(t *testing.T) {
 	if res.ResultText != "the brief" || res.ClaudeID != "thread-9" || res.NumTurns != 2 || res.CostKnown || res.Agent != AgentCodex || res.Model != "chosen" {
 		t.Fatalf("result = %+v", res)
 	}
-	args := restrictedArgs(t, record, ".args")
-	for _, want := range []string{"exec", "--json", "--sandbox", "read-only", `approval_policy="never"`, `web_search="disabled"`, "agents.enabled=false", "features.shell_tool=false", "features.plugins=false", `model_reasoning_effort="high"`} {
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	args, _ := restrictedCodexStart(t, rec, "app-server")
+	for _, want := range []string{"app-server", `approval_policy="never"`, `web_search="disabled"`, "agents.enabled=false", "features.shell_tool=false", "features.plugins=false", `model_reasoning_effort="high"`} {
 		if !slices.Contains(args, want) {
 			t.Errorf("args missing %q:\n%v", want, args)
 		}
 	}
-	if slices.Contains(args, "--dangerously-bypass-approvals-and-sandbox") {
-		t.Errorf("restricted Codex bypassed its sandbox: %v", args)
+	for _, gone := range []string{"exec", "--sandbox", "--dangerously-bypass-approvals-and-sandbox", "--json"} {
+		if slices.Contains(args, gone) {
+			t.Errorf("restricted codex carried %q, which an app-server turn does not take: %v", gone, args)
+		}
 	}
-	probe := restrictedArgs(t, record, ".mcp-args")
+	start := codexRecordedThreadStart(t, rec)
+	if start.Sandbox != "read-only" || start.ApprovalPolicy != "never" || start.Model != "chosen" {
+		t.Errorf("thread/start = %+v, want sandbox read-only, approvalPolicy never and model chosen", start)
+	}
+	probe, _ := restrictedCodexStart(t, rec, "mcp")
 	for _, want := range []string{"mcp", "list", "--json", "agents.enabled=false", "features.plugins=false", "orchestrator.mcp.enabled=false"} {
 		if !slices.Contains(probe, want) {
 			t.Errorf("MCP inventory missing %q: %v", want, probe)
@@ -172,19 +206,12 @@ func TestRunRestrictedUsesTheSharedCodexBackend(t *testing.T) {
 	}
 }
 
-// The fake models a Codex model that advertises collaboration despite the
-// multi-agent feature flags. Its attempted child action succeeds unless the
-// separate agents.enabled control forbids delegation.
+// The command line always disables delegation (agents.enabled=false),
+// whatever a Codex model advertises, and the floor only ever turns off the
+// features codexRestrictedConfigArgs names: a feature it leaves alone,
+// such as the JavaScript MCP host, is not touched.
 func TestRunRestrictedCodexCannotDelegateWhenModelExposesCollaboration(t *testing.T) {
-	record := filepath.Join(t.TempDir(), "record")
-	script := `if [ "$1" = mcp ]; then echo '[]'; exit 0; fi
-printf '%s\n' "$@" > "` + record + `.args"
-cat >/dev/null
-if ! grep -Fxq 'agents.enabled=false' "` + record + `.args"; then
-  touch "` + record + `.delegated"
-fi
-` + restrictedCodexAnswer
-	bin := agenttest.Script(t, "codex", script)
+	bin, record := agenttest.CodexAppServer(t, restrictedCodexScript(agenttest.CodexAppServerScript{}))
 	res, err := restrictedRunner(t, "", bin).RunRestricted(context.Background(), restrictedRequestFor(AgentCodex, t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
@@ -192,15 +219,17 @@ fi
 	if res.ResultText != "the brief" {
 		t.Fatalf("result = %+v", res)
 	}
-	if _, err := os.Stat(record + ".delegated"); !os.IsNotExist(err) {
-		t.Errorf("restricted Codex delegated to a child: stat error = %v", err)
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	args, _ := restrictedCodexStart(t, rec, "app-server")
+	if !slices.Contains(args, "agents.enabled=false") {
+		t.Errorf("restricted codex did not disable delegation: %v", args)
 	}
-	args := restrictedArgs(t, record, ".args")
-	if !slices.Contains(args, "--sandbox") || !slices.Contains(args, "read-only") {
-		t.Errorf("restricted Codex lost its read-only sandbox: %v", args)
+	start := codexRecordedThreadStart(t, rec)
+	if start.Sandbox != "read-only" {
+		t.Errorf("restricted codex lost its read-only sandbox: %q", start.Sandbox)
 	}
 	if slices.Contains(args, "features.code_mode_host=false") {
-		t.Errorf("restricted Codex lost the JavaScript MCP host: %v", args)
+		t.Errorf("restricted codex lost the JavaScript MCP host: %v", args)
 	}
 }
 
@@ -341,19 +370,15 @@ func TestRunRestrictedDeniesInheritedIdentityConfigurationAndMCP(t *testing.T) {
 }
 
 func TestRunRestrictedDisablesEveryInheritedCodexMCPServer(t *testing.T) {
-	bin, record := restrictedFake(t, "codex", restrictedCodexAnswer)
-	data, err := os.ReadFile(bin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := strings.Replace(string(data), "echo '[]'", `echo '[{"name":"bees"},{"name":"server.with.dots"},{"name":"server \"quoted\""},{"name":"restricted_read"}]'`, 1)
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin, record := agenttest.CodexAppServer(t, restrictedCodexScript(agenttest.CodexAppServerScript{
+		MCPServers: []string{"bees", "server.with.dots", `server "quoted"`, "restricted_read"},
+	}))
 	if _, err := restrictedRunner(t, "", bin).RunRestricted(context.Background(), restrictedRequestFor(AgentCodex, t.TempDir())); err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(restrictedArgs(t, record, ".args"), "\n")
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	args, _ := restrictedCodexStart(t, rec, "app-server")
+	joined := strings.Join(args, "\n")
 	// Every inherited server is disabled; one named like the read server is
 	// replaced by it, not disabled and not left as it was.
 	want := `mcp_servers={"bees"={enabled=false},"server.with.dots"={enabled=false},"server \"quoted\""={enabled=false},"restricted_read"={url="http://127.0.0.1:`
@@ -363,20 +388,18 @@ func TestRunRestrictedDisablesEveryInheritedCodexMCPServer(t *testing.T) {
 }
 
 func TestRunRestrictedFailsClosedBeforeCodexLaunch(t *testing.T) {
-	bin, record := restrictedFake(t, "codex", restrictedCodexAnswer)
-	data, err := os.ReadFile(bin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(bin, []byte(strings.Replace(string(data), "echo '[]'", "echo invalid", 1)), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_, err = restrictedRunner(t, "", bin).RunRestricted(context.Background(), restrictedRequestFor(AgentCodex, t.TempDir()))
+	bin, record := agenttest.CodexAppServer(t, restrictedCodexScript(agenttest.CodexAppServerScript{
+		MCPServersRaw: "invalid",
+	}))
+	_, err := restrictedRunner(t, "", bin).RunRestricted(context.Background(), restrictedRequestFor(AgentCodex, t.TempDir()))
 	if err == nil || !strings.Contains(err.Error(), "decode MCP servers") {
 		t.Fatalf("error = %v", err)
 	}
-	if _, err := os.Stat(record + ".args"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("model launched after restriction setup failed: %v", err)
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	for _, a := range rec.Argv {
+		if len(a) > 1 && a[1] == "app-server" {
+			t.Fatalf("codex launched after restriction setup failed: %v", rec.Argv)
+		}
 	}
 }
 
@@ -421,7 +444,7 @@ func TestRunRestrictedRefusesPiPackagesBeforeLaunch(t *testing.T) {
 
 func TestRunRestrictedFallsBackUnderTheSameFloor(t *testing.T) {
 	limited, limitedRecord := restrictedFake(t, "claude", `echo '{"type":"result","subtype":"error","is_error":true,"result":"rate limit reached","session_id":"s0"}'`)
-	answering, answerRecord := restrictedFake(t, "codex", restrictedCodexAnswer)
+	answering, answerRecord := agenttest.CodexAppServer(t, restrictedCodexScript(agenttest.CodexAppServerScript{}))
 	r := restrictedRunner(t, limited, answering)
 	req := restrictedRequestFor(AgentClaude, t.TempDir())
 	req.Profile.Model = "opus"
@@ -436,9 +459,14 @@ func TestRunRestrictedFallsBackUnderTheSameFloor(t *testing.T) {
 	if slices.Contains(restrictedArgs(t, limitedRecord, ".args"), "--dangerously-skip-permissions") {
 		t.Error("primary escaped the restriction")
 	}
-	args := restrictedArgs(t, answerRecord, ".args")
-	if !slices.Contains(args, "read-only") || !slices.Contains(args, "features.shell_tool=false") {
+	rec := agenttest.ReadCodexAppServerRecord(t, answerRecord)
+	args, _ := restrictedCodexStart(t, rec, "app-server")
+	if !slices.Contains(args, "features.shell_tool=false") {
 		t.Errorf("fallback escaped the restriction: %v", args)
+	}
+	start := codexRecordedThreadStart(t, rec)
+	if start.Sandbox != "read-only" {
+		t.Errorf("fallback escaped the restriction: sandbox = %q", start.Sandbox)
 	}
 }
 
@@ -492,9 +520,14 @@ func TestRunRestrictedReportsMalformedAndFailedOutput(t *testing.T) {
 		}
 	})
 	t.Run("failed codex", func(t *testing.T) {
-		bin, _ := restrictedFake(t, "codex", `echo '{"type":"turn.failed","error":{"message":"context window"}}'`)
+		bin, _ := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+			ThreadID: "thread-9",
+			Actions: []agenttest.CodexAppServerAction{
+				{Notify: &agenttest.CodexAppServerMessage{Method: "error", Params: map[string]any{"message": "context window"}}},
+			},
+		})
 		_, err := restrictedRunner(t, "", bin).RunRestricted(context.Background(), restrictedRequestFor(AgentCodex, t.TempDir()))
-		if err == nil || !strings.Contains(err.Error(), "turn_failed: context window") {
+		if err == nil || !strings.Contains(err.Error(), "context window") {
 			t.Fatalf("error = %v", err)
 		}
 	})

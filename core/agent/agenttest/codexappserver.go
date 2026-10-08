@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // CodexAppServerFakeEnv set to "1" makes the running test binary a fake
@@ -61,6 +62,12 @@ type CodexAppServerInterrupt struct {
 	Status string `json:"status"`
 }
 
+// CodexAppServerPause scripts a pause once turn/start is answered; see
+// CodexAppServerScript.Pause.
+type CodexAppServerPause struct {
+	ReadyFile, ReleaseFile string
+}
+
 // CodexAppServerScript scripts a fake `codex app-server`'s conversation,
 // as CodexAppServer hands it to the fake: see that function.
 type CodexAppServerScript struct {
@@ -98,6 +105,25 @@ type CodexAppServerScript struct {
 
 	// Interrupt scripts turn/interrupt; see CodexAppServerInterrupt.
 	Interrupt *CodexAppServerInterrupt `json:"interrupt,omitempty"`
+
+	// Pause, when set, makes the fake wait once turn/start is answered,
+	// before running Actions: it creates PauseReady (so a test waiting on
+	// it knows the turn is in progress and the command line it launched
+	// with is already on disk) and then polls for PauseRelease before
+	// going on. It exists for a test that needs to act while the turn is
+	// still running — reading through a restricted turn's read server
+	// before its turn ends and the server is closed.
+	Pause *CodexAppServerPause `json:"pause,omitempty"`
+
+	// MCPServers is the fake's answer to `codex mcp list --json`, the
+	// inventory a restricted turn's command line runs (codexMCPInventory)
+	// as a process of its own, apart from the app-server conversation
+	// above: the configured servers' names, printed as the array `codex
+	// mcp list` writes. Left nil, the fake prints an empty array.
+	// MCPServersRaw, when set, is printed in its place, so a script can
+	// answer with output the inventory cannot decode.
+	MCPServers    []string `json:"mcpServers,omitempty"`
+	MCPServersRaw string   `json:"mcpServersRaw,omitempty"`
 }
 
 // CodexAppServer arranges for the running test binary, re-executed, to be a
@@ -107,10 +133,13 @@ type CodexAppServerScript struct {
 // CodexAppServerFakeEnv and the script's location for the rest of the
 // calling test (t.Setenv, undone when it ends) and returns the test
 // binary's own path, which the caller hands a Runner as CodexBin, or runs
-// directly. Invoked with "app-server" among its arguments (any others are
-// read and recorded but otherwise ignored), the fake speaks the app-server
-// JSON-RPC conversation over stdin and stdout, one message per line, and
-// exits when stdin closes. Every line it receives, and its own argv, go to
+// directly. Invoked with "app-server" as its first argument, the fake
+// speaks the app-server JSON-RPC conversation over stdin and stdout, one
+// message per line, and exits when stdin closes. Invoked with "mcp" as its
+// first argument instead — a restricted turn's inventory, run apart from
+// the app-server process — it prints script's MCPServers (or
+// MCPServersRaw) and exits at once, reading nothing. Every line the
+// app-server conversation receives, and every invocation's own argv, go to
 // the record file whose path CodexAppServer also returns, which
 // ReadCodexAppServerRecord reads back; it also counts how many times the
 // fake started.
@@ -148,20 +177,24 @@ type codexWireMessage struct {
 }
 
 // codexRecordEntry is one line of a fake `codex app-server`'s record file,
-// recording either a start (its argv) or a line it received on stdin.
+// recording either a start (its argv and environment) or a line it
+// received on stdin.
 type codexRecordEntry struct {
 	Type string   `json:"type"`
 	Argv []string `json:"argv,omitempty"`
+	Env  []string `json:"env,omitempty"`
 	Text string   `json:"text,omitempty"`
 }
 
 // CodexAppServerRecord is what a fake `codex app-server` wrote to its
 // record file (see CodexAppServer): how many times it started, each
-// start's argv in the order the starts happened, and every line it
-// received on stdin across every start, in the order it arrived.
+// start's argv and environment in the order the starts happened (Env[i]
+// is Argv[i]'s invocation), and every line it received on stdin across
+// every start, in the order it arrived.
 type CodexAppServerRecord struct {
 	Starts int
 	Argv   [][]string
+	Env    [][]string
 	Lines  []string
 }
 
@@ -186,6 +219,7 @@ func ReadCodexAppServerRecord(t *testing.T, path string) CodexAppServerRecord {
 		case "start":
 			rec.Starts++
 			rec.Argv = append(rec.Argv, e.Argv)
+			rec.Env = append(rec.Env, e.Env)
 		case "line":
 			rec.Lines = append(rec.Lines, e.Text)
 		}
@@ -217,7 +251,29 @@ func RunCodexAppServer() int {
 		return 1
 	}
 	defer func() { _ = rf.Close() }()
-	appendCodexRecord(rf, codexRecordEntry{Type: "start", Argv: os.Args})
+	appendCodexRecord(rf, codexRecordEntry{Type: "start", Argv: os.Args, Env: os.Environ()})
+
+	// A restricted turn's inventory (codexMCPInventory) runs `codex mcp
+	// list --json ...` as a process of its own, apart from the app-server
+	// conversation below: answered at once, without reading stdin, and
+	// recorded the same way every invocation's argv already is.
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		if script.MCPServersRaw != "" {
+			fmt.Println(script.MCPServersRaw)
+			return 0
+		}
+		servers := make([]map[string]string, len(script.MCPServers))
+		for i, name := range script.MCPServers {
+			servers[i] = map[string]string{"name": name}
+		}
+		b, err := json.Marshal(servers)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake codex app-server:", err)
+			return 1
+		}
+		fmt.Println(string(b))
+		return 0
+	}
 
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
@@ -360,6 +416,19 @@ func RunCodexAppServer() int {
 		return 0
 	}
 	respond(msg.ID, map[string]any{"turn": map[string]any{"id": script.TurnID}}, nil)
+
+	if script.Pause != nil {
+		if err := os.WriteFile(script.Pause.ReadyFile, nil, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "fake codex app-server:", err)
+			return 1
+		}
+		for {
+			if _, err := os.Stat(script.Pause.ReleaseFile); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
 
 	for _, action := range script.Actions {
 		switch {

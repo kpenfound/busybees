@@ -103,13 +103,15 @@ func (c *rpcConversation) notification() (method string, item, status string) {
 			Item struct {
 				Text string `json:"text"`
 			} `json:"item"`
-			Status string `json:"status"`
+			Turn struct {
+				Status string `json:"status"`
+			} `json:"turn"`
 		} `json:"params"`
 	}
 	if err := json.Unmarshal(c.in.Bytes(), &msg); err != nil {
 		c.t.Fatalf("decode notification: %v (%s)", err, c.in.Text())
 	}
-	return msg.Method, msg.Params.Item.Text, msg.Params.Status
+	return msg.Method, msg.Params.Item.Text, msg.Params.Turn.Status
 }
 
 // A full conversation with the fake run as `codex app-server` instead of

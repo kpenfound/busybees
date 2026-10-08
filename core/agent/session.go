@@ -78,8 +78,10 @@ type Request struct {
 	// runner stops it once the known cost its stream reports reaches this
 	// many dollars, and a session that ends with a known cost at or over
 	// it is reported as capped too (Result.CostCapped). Zero is no cap. A
-	// cost the backend does not report never reaches the cap: codex
-	// reports none, so a codex session runs to its end.
+	// cost the backend does not report never reaches the cap: codex's app
+	// server records token counts in the transcript
+	// (thread/tokenUsage/updated) but never prices them, so this cap stays
+	// inert and no codex session is ever stopped by it.
 	CostCapUSD float64
 }
 

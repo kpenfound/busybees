@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -214,9 +215,9 @@ func TestTheReadServerAnswersOnlyItsTokenAndStopsWithTheTurn(t *testing.T) {
 func TestRunRestrictedGivesCodexTheReadServer(t *testing.T) {
 	sync := t.TempDir()
 	ready, release := filepath.Join(sync, "ready"), filepath.Join(sync, "release")
-	bin, record := restrictedFake(t, "codex", `touch "`+ready+`"
-while [ ! -f "`+release+`" ]; do sleep 0.05; done
-`+restrictedCodexAnswer)
+	bin, record := agenttest.CodexAppServer(t, restrictedCodexScript(agenttest.CodexAppServerScript{
+		Pause: &agenttest.CodexAppServerPause{ReadyFile: ready, ReleaseFile: release},
+	}))
 	dir, _ := readWorkspace(t)
 	done := make(chan error, 1)
 	go func() {
@@ -234,14 +235,16 @@ while [ ! -f "`+release+`" ]; do sleep 0.05; done
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	args := strings.Join(restrictedArgs(t, record, ".args"), "\n")
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	argv, env := restrictedCodexStart(t, rec, "app-server")
+	args := strings.Join(argv, "\n")
 	m := regexp.MustCompile(`mcp_servers=\{"restricted_read"=\{url="(http://127\.0\.0\.1:\d+/mcp)",bearer_token_env_var="` + readServerTokenEnv + `"\}\}`).FindStringSubmatch(args)
 	if m == nil {
 		_ = os.WriteFile(release, nil, 0o644)
 		t.Fatalf("codex was not given the read server:\n%s", args)
 	}
 	var token string
-	for _, line := range restrictedArgs(t, record, ".env") {
+	for _, line := range env {
 		if v, ok := strings.CutPrefix(line, readServerTokenEnv+"="); ok {
 			token = v
 		}
@@ -258,10 +261,13 @@ while [ ! -f "`+release+`" ]; do sleep 0.05; done
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"features.shell_tool=false", "features.unified_exec=false", "features.image_generation=false", "--sandbox"} {
+	for _, want := range []string{"features.shell_tool=false", "features.unified_exec=false", "features.image_generation=false"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the read server came with less of the floor: %q missing", want)
 		}
+	}
+	if start := codexRecordedThreadStart(t, rec); start.Sandbox != "read-only" {
+		t.Errorf("the read server came with less of the floor: sandbox = %q", start.Sandbox)
 	}
 }
 
