@@ -24,7 +24,8 @@ import (
 
 // echoEngine stands in for a Dagger engine on a Unix socket: it answers
 // every line with the same line. The socket lives under /tmp, where its path
-// is short enough for every platform's limit.
+// is short enough for every platform's limit. It leaves a real Dagger engine
+// unverified: nothing here speaks Dagger's own session protocol, only lines.
 func echoEngine(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "engine")
@@ -424,7 +425,10 @@ func TestSandboxDaggerAddress(t *testing.T) {
 
 // fakeContainerEngine stands in for docker: `exec -i <name> buildctl
 // dial-stdio` echoes its stdin, as an engine answering every line would,
-// and records its arguments and pid beside itself.
+// and records its arguments and pid beside itself. It leaves a real Docker
+// daemon and the Dagger engine running inside one unverified: nothing here
+// is a buildctl session, so a change to either one's own protocol would not
+// be caught.
 func fakeContainerEngine(t *testing.T) string {
 	t.Helper()
 	return agenttest.Script(t, "docker", `here=$(dirname "$0")

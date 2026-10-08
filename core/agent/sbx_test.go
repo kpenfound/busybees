@@ -22,7 +22,10 @@ import (
 // fakeSbx stands in for the Docker Sandboxes CLI: `create` and `rm` record
 // their arguments beside the script, `exec` records its arguments and the
 // client's environment in the session directory and runs the command after
-// the sandbox name on the host.
+// the sandbox name on the host. It leaves a real sbx CLI and the Docker
+// Sandboxes daemon it talks to unverified: every call but the session's own
+// command succeeds or fails only as its marker files say, never because of
+// what sbx or a real sandbox actually does.
 func fakeSbx(t *testing.T) string { return agenttest.Sbx(t, "TASK_SESSION_DIR") }
 
 // A sandbox session is `sbx create` with the worktree, the repository's .git
@@ -613,6 +616,47 @@ func TestSandboxBoundaryEnvironmentAndBinds(t *testing.T) {
 	req.ContainerEnv = map[string]string{"UNLISTED": "x"}
 	if _, err := (SandboxBoundary{}).Verify(req); !errors.Is(err, ErrNotGranted) {
 		t.Errorf("an ungranted variable: %v", err)
+	}
+}
+
+// sbx has no executable masking of its own (TestSandboxDeniesVCSExecutablesByName
+// denies VCS executables by name instead): what actually keeps VCS
+// credentials, configuration and metadata out of a sandbox turn without the
+// grant is shared with every boundary (grants.go), verified here through
+// SandboxBoundary. An allowlist entry that could carry VCS credentials or
+// configuration is refused outright, and so is a writable mount that holds
+// VCS metadata; granting VCS admits both.
+func TestSandboxRefusesVCSWithoutTheGrant(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate func(t *testing.T, work string, g *Grants)
+		want   string
+	}{
+		"a credential in the allowlist": {
+			func(_ *testing.T, _ string, g *Grants) { g.Env = append(g.Env, "GH_TOKEN") },
+			"VCS credentials",
+		},
+		"a writable VCS metadata mount": {
+			func(t *testing.T, work string, _ *Grants) {
+				if err := os.Mkdir(filepath.Join(work, ".git"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			"VCS metadata",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			work := t.TempDir()
+			g := &Grants{Env: []string{"PATH"}, Tools: []string{ToolsAll}, Mounts: []Mount{{Path: work, Access: ReadWrite}}}
+			tc.mutate(t, work, g)
+			req := Request{Workspace: fakeWorkspace{dir: work}, SessionDir: work, Grants: g, Profile: Profile{Sandbox: SandboxSbx}}
+			if _, err := (SandboxBoundary{}).Verify(req); !errors.Is(err, ErrNotGranted) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("without VCS: %v, want ErrNotGranted naming %q", err, tc.want)
+			}
+			g.VCS, req.Profile.VCSAccess = true, true
+			if _, err := (SandboxBoundary{}).Verify(req); err != nil {
+				t.Errorf("with VCS granted: %v", err)
+			}
+		})
 	}
 }
 
