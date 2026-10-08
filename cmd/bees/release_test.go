@@ -11,6 +11,13 @@ import (
 	"testing"
 )
 
+// The tests in this file are a maintained contract, not an implementation
+// detail: the asset naming scheme and the main.version ldflag name are a
+// public interface shared across .github/workflows/release.yml,
+// docs/releasing.md and install.sh, so the tests read those files as text
+// (rather than asserting against a copy) and must keep failing whenever one
+// of them drifts from the others.
+
 // releaseWorkflow is the one workflow file this repository has. Tests read it
 // from disk rather than embedding a copy: the file is what has to stay true.
 // It is listed in dagger.toml's includeExtraFiles so the check container sees

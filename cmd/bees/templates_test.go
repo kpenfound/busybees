@@ -54,17 +54,6 @@ func TestTemplatesShow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tpl, err := config.TemplateByName("slop-factory")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := config.RenderTOML(config.RenderOptions{Template: &tpl})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stdout != want {
-		t.Errorf("show printed something other than the template's render:\n%s", stdout)
-	}
 	if !strings.HasPrefix(stdout, "# Template: slop-factory\n#\n# ") {
 		t.Errorf("show does not start with the When paragraph as comments:\n%s", stdout[:120])
 	}

@@ -304,46 +304,67 @@ func TestMergeLogging(t *testing.T) {
 	}
 }
 
-// setupLogging records which dimensions were an explicit choice, which is what
-// decides whether bees.toml may fill them in.
-func TestConsoleFlagsRecordExplicitness(t *testing.T) {
-	t.Run("defaults are not explicit", func(t *testing.T) {
-		g := runRootFlags(t, "version")
-		if g.console.formatExplicit || g.console.levelExplicit {
-			t.Errorf("console: %+v", g.console)
+// bees.toml's [logging] table, applied by loadConfig once a command reads
+// it, only fills in a dimension the flags and the environment left alone: a
+// flag or environment value beats the file, which beats the built-in
+// default. This drives the real command pipeline (flag/env parsing through
+// loadConfig's applyLogging) rather than calling mergeLogging with a
+// hand-built consoleFlags, so it also exercises setupLogging's explicitFlag
+// detection; TestMergeLogging below covers the merge precedence itself with
+// literal inputs.
+func TestBeesTomlLoggingFillsOnlyWhatWasNotChosen(t *testing.T) {
+	// `cost` reads bees.toml and, with no ledger, succeeds with "no sessions
+	// recorded" — a command whose RunE reaches loadConfig without requiring
+	// anything beyond a git clone.
+	run := func(t *testing.T, args ...string) *bytes.Buffer {
+		t.Helper()
+		path := writeProject(t, "acme/widgets", "[logging]\nformat = \"json\"\nlevel = \"warn\"\n")
+		root := newRoot()
+		var out bytes.Buffer
+		root.SetArgs(append([]string{"cost", "--config", path}, args...))
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&out)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("bees %v: %v", args, err)
 		}
-	})
-	t.Run("flags are explicit", func(t *testing.T) {
-		g := runRootFlags(t, "version", "--log-format", "text", "--log-level", "info")
-		if !g.console.formatExplicit || !g.console.levelExplicit {
-			t.Errorf("console: %+v", g.console)
-		}
-	})
-	t.Run("environment variables are explicit", func(t *testing.T) {
-		t.Setenv("BEES_LOG_FORMAT", "json")
-		t.Setenv("BEES_LOG_LEVEL", "warn")
-		g := runRootFlags(t, "version")
-		if !g.console.formatExplicit || !g.console.levelExplicit {
-			t.Errorf("console: %+v", g.console)
-		}
-	})
-	t.Run("-v is an explicit level", func(t *testing.T) {
-		g := runRootFlags(t, "version", "-v")
-		if g.console.levelExplicit != true || g.console.level != slog.LevelDebug {
-			t.Errorf("console: %+v", g.console)
-		}
-	})
-}
-
-// runRootFlags executes the CLI and returns the global flags it resolved.
-func runRootFlags(t *testing.T, args ...string) *globalFlags {
-	t.Helper()
-	g, root := newRootWithFlags()
-	root.SetArgs(args)
-	root.SetOut(&bytes.Buffer{})
-	root.SetErr(&bytes.Buffer{})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
+		slog.Info("dropped unless level stayed at info or below")
+		slog.Warn("always kept")
+		return &out
 	}
-	return g
+
+	t.Run("no flag or env: bees.toml fills both dimensions", func(t *testing.T) {
+		out := run(t)
+		if strings.Contains(out.String(), "dropped") {
+			t.Errorf("bees.toml's level = \"warn\" did not apply: %q", out.String())
+		}
+		if !strings.HasPrefix(strings.TrimSpace(out.String()), "{") {
+			t.Errorf("bees.toml's format = \"json\" did not apply: %q", out.String())
+		}
+	})
+
+	t.Run("an explicit flag survives bees.toml, the other dimension still fills in", func(t *testing.T) {
+		out := run(t, "--log-format", "text")
+		if strings.HasPrefix(strings.TrimSpace(out.String()), "{") {
+			t.Errorf("--log-format text was overridden by bees.toml: %q", out.String())
+		}
+		if strings.Contains(out.String(), "dropped") {
+			t.Errorf("bees.toml's level = \"warn\" should still apply to the untouched dimension: %q", out.String())
+		}
+	})
+
+	t.Run("an explicit environment value survives bees.toml", func(t *testing.T) {
+		t.Setenv("BEES_LOG_LEVEL", "error")
+		out := run(t)
+		if strings.Contains(out.String(), "always kept") {
+			t.Errorf("BEES_LOG_LEVEL=error was overridden by bees.toml's level = \"warn\": %q", out.String())
+		}
+	})
+
+	t.Run("-v survives bees.toml like an explicit level", func(t *testing.T) {
+		out := run(t, "-v")
+		slog.Debug("kept because -v forced debug")
+		if !strings.Contains(out.String(), "kept because -v forced debug") {
+			t.Errorf("-v was overridden by bees.toml's level = \"warn\": %q", out.String())
+		}
+	})
 }
