@@ -236,7 +236,10 @@ func TestSuggestionsWithBackticksAreFencedLonger(t *testing.T) {
 }
 
 // reviewGH is a fake gh for Post: the pull request, its diff, and what was
-// posted through the stdin hook.
+// posted through the stdin hook. It accepts whatever Compose sends it, so it
+// leaves unverified whether GitHub's own API would take the review body and
+// comments as shaped; that is the github package's own concern, not this
+// one's.
 type reviewGH struct {
 	pr     github.PR
 	diff   string

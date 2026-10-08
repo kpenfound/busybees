@@ -97,7 +97,10 @@ func queueOf(t *testing.T, a *review.Artifact) *review.Queue {
 }
 
 // fakeAgent answers every session with one text, and remembers what it was
-// asked.
+// asked. It always answers, so it leaves unverified whether a real agent
+// binary would accept the resumed session's id and prompt; internal/review's
+// own tests, which run one through a real subprocess, are what test that
+// boundary.
 type fakeAgent struct {
 	text string
 	err  error

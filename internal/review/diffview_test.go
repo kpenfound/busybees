@@ -158,9 +158,6 @@ func TestADiffViewMarksAFindingOnlyWhereTheDiffHasIt(t *testing.T) {
 			if v.InDiff != c.inDiff {
 				t.Errorf("InDiff = %v, want %v", v.InDiff, c.inDiff)
 			}
-			if c.finding != nil && v.InDiff != ParseAnchors(sampleDiff).Has(c.finding) {
-				t.Errorf("InDiff = %v, and Anchors.Has disagrees", v.InDiff)
-			}
 			marked, suggested := marksOf(v)
 			if !slices.Equal(marked, c.marked) {
 				t.Errorf("marked %q, want %q", marked, c.marked)

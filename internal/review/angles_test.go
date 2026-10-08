@@ -18,7 +18,10 @@ import (
 // fakeAngleAgent stands in for the coding agent under a fan-out: it records
 // every session it was asked to run, by name, and can hold each one until
 // expect of them have started, which is how a test tells sessions run at
-// once from sessions run one after another.
+// once from sessions run one after another. It always answers, so it leaves
+// unverified whether a real agent binary would accept the read-only flags
+// and the prompt it is given; TestAnAngleSessionIsReadOnly, which runs a real
+// subprocess through fakeCLI, is what tests that boundary.
 type fakeAngleAgent struct {
 	expect int
 	fail   map[string]error
