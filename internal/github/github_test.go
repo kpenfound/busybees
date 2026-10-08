@@ -688,7 +688,10 @@ func TestBeeRole(t *testing.T) {
 // fakeGHOnPath puts a `gh` on PATH that reports the token it was given and
 // what it read on stdin. Tests must never reach the real gh; this one is the
 // only way to see the environment the client builds, because the Exec hooks
-// replace command execution wholesale and so never see it.
+// replace command execution wholesale and so never see it. It is a shell
+// script, not the real gh, so it cannot show how gh itself would react to the
+// environment it is handed (for example to an empty GH_TOKEN); it only shows
+// what busybees' own code put there.
 func fakeGHOnPath(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -738,17 +741,9 @@ func TestNoTokenInjectsNothing(t *testing.T) {
 	if c.Token != "" {
 		t.Fatalf("New set a token: %q", c.Token)
 	}
-	// Printing the whole environment would bury the point: report only what
-	// the builder added on top of the process's own.
-	if cmd, _ := c.command(ctx, "issue", "list"); cmd.Env != nil {
-		var tokens []string
-		for _, e := range cmd.Env {
-			if strings.HasPrefix(e, "GH_TOKEN=") {
-				tokens = append(tokens, e)
-			}
-		}
-		t.Errorf("command builds an explicit environment without a token (%d vars, GH_TOKEN entries %q)", len(cmd.Env), tokens)
-	}
+	// With no configured token, gh must inherit the machine's own GH_TOKEN
+	// rather than being handed an explicit empty one (which gh reads as "no
+	// credentials"). The fake gh below reports what it actually received.
 	out, err := c.Exec(ctx, "issue", "list")
 	if err != nil {
 		t.Fatal(err)
@@ -883,13 +878,12 @@ func TestIsBeeCountsTheFactorysOwnLogin(t *testing.T) {
 			if got := IsBee(tc.login, tc.author, tc.body); got != tc.want {
 				t.Errorf("IsBee(%q, %q, ...) = %v, want %v", tc.login, tc.author, got, tc.want)
 			}
-			// Client.isBee is the same rule asked with the login the client
-			// acts as, and there is one implementation of it: the
-			// renderer in internal/mcpserver calls the exported one.
-			c := NewAs("a/b", tc.login, "")
-			if got := c.isBee(tc.author, tc.body); got != tc.want {
-				t.Errorf("isBee(%q, ...) with login %q = %v, want %v", tc.author, tc.login, got, tc.want)
-			}
+			// Client wires this same rule through its ActsAs login; that
+			// wiring is exercised through the public API by
+			// TestClientAwaitingBeeCountsTheFactorysOwnLogin and
+			// TestPRActivityDropsTheFactorysOwnComments, so it is not
+			// repeated here against the private method.
+			//
 			// The methods on the plain data types read the marker only,
 			// whatever the client is configured with: they have no login.
 			cm := Comment{Author: Author{Login: tc.author}, Body: tc.body}

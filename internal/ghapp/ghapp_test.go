@@ -18,6 +18,13 @@ import (
 // TestMintsOnlyWhenExpired: a token is minted on first use and again only
 // once the cached one is within Skew of expiring, however many calls come
 // in between, and concurrent callers share one mint.
+//
+// ghapptest.Server checks the JWT's signature, issuer and lifetime and
+// records the repositories each mint asked for, so it is not an
+// unconditional success; it does not model GitHub actually scoping the
+// returned token's permissions to those repositories, rate limiting, or an
+// installation spanning more than one repository, and no test here drives
+// its unauthorized (bad-signature) branch.
 func TestMintsOnlyWhenExpired(t *testing.T) {
 	srv := ghapptest.New(t, "acme/widgets")
 	dir := t.TempDir()
@@ -65,7 +72,10 @@ func TestMintsOnlyWhenExpired(t *testing.T) {
 }
 
 // TestSlugAndInstallation: the two questions bees init and bees doctor ask
-// of the App, and the answer when it is not installed on the repository.
+// of the App, and the answer when it is not installed on the repository
+// (permission denial). The fake answers "not installed" with a plain 404,
+// as GitHub does for a repository the App cannot see; it does not model a
+// repository that exists but the App lacks a specific permission on.
 func TestSlugAndInstallation(t *testing.T) {
 	srv := ghapptest.New(t, "acme/widgets")
 	ctx := context.Background()
