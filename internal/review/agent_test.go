@@ -90,6 +90,53 @@ func fakeLog(t *testing.T, body string) (bin, record string) {
 	return bin, record
 }
 
+// fakeCodex writes a fake `codex` that speaks the app-server JSON-RPC
+// conversation core/agent's driver (core/agent/codex_rpc.go) drives for
+// every turn: initialize, the initialized notification, thread/start (or
+// thread/resume), turn/start, then afterTurnStart — a shell snippet run
+// once turn/start is answered, which prints whatever notifications a
+// scenario needs. The driver closes stdin once the turn ends (or once it
+// gives up on it), which ends the fake; a scenario that must end the
+// stream itself (one that never completes the turn) exits from within
+// afterTurnStart instead. The thread id is always "thread-9", read back
+// the same way the exec-era fake's thread id was.
+//
+// Invoked as `codex mcp list --json ...` instead — a restricted turn's
+// inventory, a process of its own apart from the conversation above — it
+// answers at once, without reading stdin, the way the exec-era fake's
+// probe did: recording its own argv and directory and printing an empty
+// array, which a test can replace the same way (strings.Replace on "echo
+// '[]'").
+func fakeCodex(t *testing.T, afterTurnStart string) (bin, record string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin = filepath.Join(dir, "codex")
+	record = filepath.Join(dir, "record")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = mcp ]; then printf '%s\\n' \"$@\" > " + record + ".mcp-args; pwd > " + record + ".mcp-dir; echo '[]'; exit 0; fi\n" +
+		"printf '%s\\n' \"$@\" > " + record + ".args\n" +
+		"pwd > " + record + ".dir\n" +
+		"env > " + record + ".env\n" +
+		": > " + record + ".stdin\n" +
+		"while IFS= read -r line; do\n" +
+		"  printf '%s\\n' \"$line\" >> " + record + ".stdin\n" +
+		"  method=$(printf '%s' \"$line\" | grep -o '\"method\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)\n" +
+		"  id=$(printf '%s' \"$line\" | grep -o '\"id\":[0-9]*' | head -1 | cut -d: -f2)\n" +
+		"  case \"$method\" in\n" +
+		"    initialize) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{}}\\n' \"$id\" ;;\n" +
+		"    thread/start|thread/resume) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"thread\":{\"id\":\"thread-9\"}}}\\n' \"$id\" ;;\n" +
+		"    turn/start)\n" +
+		"      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"turn\":{\"id\":\"turn-1\"}}}\\n' \"$id\"\n" +
+		afterTurnStart + "\n" +
+		"      ;;\n" +
+		"  esac\n" +
+		"done\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, record
+}
+
 func recorded(t *testing.T, record, what string) string {
 	t.Helper()
 	data, err := os.ReadFile(record + "." + what)
@@ -113,15 +160,48 @@ func envOf(t *testing.T, record string) string {
 	return "\n" + recorded(t, record, "env")
 }
 
+// codexThreadStart reads the lines a fakeCodex recorded and returns the
+// params of the thread/start or thread/resume request among them — the
+// protocol's own record of the sandbox, the model and the rest of what
+// the turn asked for, now that those are no longer command-line flags.
+func codexThreadStart(t *testing.T, record string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(record + ".stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var msg struct {
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &msg) != nil {
+			continue
+		}
+		if msg.Method == "thread/start" || msg.Method == "thread/resume" {
+			return msg.Params
+		}
+	}
+	t.Fatal("no thread/start or thread/resume recorded")
+	return nil
+}
+
 // The four answers: one session of each backend, each answering "the brief".
 const claudeAnswer = `echo '{"type":"result","subtype":"success","is_error":false,` +
 	`"result":"the brief","session_id":"sess-1","num_turns":3,"total_cost_usd":0.5}'`
 
-const codexAnswer = `echo '{"type":"thread.started","thread_id":"thread-9"}'
-echo '{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"the brief"}}'
-echo '{"type":"item.completed","item":{"type":"reasoning","text":"that will do"}}'
-echo '{"type":"turn.completed"}'`
+// codexAnswer is the shell snippet a fakeCodex runs once turn/start is
+// answered: three item/completed notifications, the middle one the
+// agent's message, then turn/completed with a completed status — the
+// app-server shape of "the brief", read back the same way the exec-era
+// fake's three item.completed/turn.completed lines were.
+const codexAnswer = `echo '{"method":"item/completed","params":{"item":{"type":"reasoning","text":"thinking"}}}'
+echo '{"method":"item/completed","params":{"item":{"type":"agent_message","text":"the brief"}}}'
+echo '{"method":"item/completed","params":{"item":{"type":"reasoning","text":"that will do"}}}'
+echo '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'`
 
 const openCodeAnswer = `echo '{"type":"text","sessionID":"open-7","part":{"type":"text","text":"the brief"}}'
 echo '{"type":"step_finish","sessionID":"open-7","part":{"type":"step-finish","reason":"stop","cost":0.25}}'`
@@ -153,6 +233,18 @@ func sessionsByAgent() map[string]session {
 // any of them through one adapter.
 func allProviderBins(bin string) *CLIAgent {
 	return &CLIAgent{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, PiBin: bin}
+}
+
+// fakeProvider is the fake for name's own session: codex through fakeCodex,
+// whose body (tc.answer, from sessionsByAgent) is the shell snippet run
+// once its app-server fake answers turn/start; every other backend
+// through fakeCLI, whose body just prints the answer the agent gives.
+func fakeProvider(t *testing.T, name, answer string) (bin, record string) {
+	t.Helper()
+	if name == config.AgentCodex {
+		return fakeCodex(t, answer)
+	}
+	return fakeCLI(t, answer)
 }
 
 func TestAClaudeReviewSessionIsReadOnly(t *testing.T) {
@@ -237,7 +329,7 @@ func TestASessionRunsInTheDirectoryItWasGiven(t *testing.T) {
 func TestEveryProviderAnswersThroughTheAdapter(t *testing.T) {
 	for name, tc := range sessionsByAgent() {
 		t.Run(name, func(t *testing.T) {
-			bin, _ := fakeCLI(t, tc.answer)
+			bin, _ := fakeProvider(t, name, tc.answer)
 			agent := allProviderBins(bin)
 			agent.Provider = name
 			res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
@@ -314,11 +406,20 @@ func TestAClaudeSessionIsResumedByItsID(t *testing.T) {
 func TestAModelTheConfigurationLeavesOutIsTheAgentsOwn(t *testing.T) {
 	for name, tc := range sessionsByAgent() {
 		t.Run(name, func(t *testing.T) {
-			bin, record := fakeCLI(t, tc.answer)
+			bin, record := fakeProvider(t, name, tc.answer)
 			agent := allProviderBins(bin)
 			agent.Provider = name
 			if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()}); err != nil {
 				t.Fatal(err)
+			}
+			// Codex never puts its model on the command line, chosen or
+			// not: a review's turns carry it, when there is one, in
+			// thread/start's own params.
+			if name == config.AgentCodex {
+				if ts := codexThreadStart(t, record); ts["model"] != nil {
+					t.Errorf("a model was chosen: %v", ts)
+				}
+				return
 			}
 			if got := args(t, record); strings.Contains(got, "--model") {
 				t.Errorf("a model was chosen:\n%s", got)
@@ -336,19 +437,24 @@ func TestACLIThatCouldNotBeRunIsAnError(t *testing.T) {
 }
 
 func TestACodexReviewSessionRunsInItsReadOnlySandbox(t *testing.T) {
-	bin, record := fakeCLI(t, codexAnswer)
+	bin, record := fakeCodex(t, codexAnswer)
 	agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin, Model: "gpt-5", Effort: "max"}
 	res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := args(t, record)
-	for _, want := range []string{"\nexec\n", "\n--json\n", "\n--sandbox\nread-only\n", "\n--model\ngpt-5\n",
+	for _, want := range []string{"\napp-server\n",
 		"\nmodel_reasoning_effort=\"high\"\n", "\nfeatures.shell_tool=false\n", "\nfeatures.plugins=false\n",
-		"\nweb_search=\"disabled\"\n", "\napproval_policy=\"never\"\n", "\n-\n"} {
+		"\nweb_search=\"disabled\"\n", "\napproval_policy=\"never\"\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("codex was not given %q:\n%s", want, got)
 		}
+	}
+	// The sandbox and the model are no longer command-line flags: they are
+	// thread/start's own params now.
+	if ts := codexThreadStart(t, record); ts["sandbox"] != "read-only" || ts["model"] != "gpt-5" {
+		t.Errorf("thread/start params = %v, want sandbox read-only and model gpt-5", ts)
 	}
 	// Codex has no resume, and the id of a claude session is not one of its
 	// threads: the shared execution refuses one before the launch rather
@@ -362,14 +468,14 @@ func TestACodexReviewSessionRunsInItsReadOnlySandbox(t *testing.T) {
 }
 
 func TestAFailedCodexTurnIsAnError(t *testing.T) {
-	// A failed turn says why under "error", a codex that gave up on the
-	// session says it in the event itself.
+	// A failed turn says why in turn/completed's own status, a codex that
+	// gave up on the session says it in an "error" notification instead.
 	for _, tc := range []struct{ name, event, want string }{
-		{"a failed turn", `{"type":"turn.failed","error":{"message":"context window"}}`, "turn_failed: context window"},
-		{"an error", `{"type":"error","message":"no capacity"}`, "error: no capacity"},
+		{"a failed turn", `{"method":"turn/completed","params":{"turn":{"status":"failed"}}}`, `error: turn ended with status "failed"`},
+		{"an error", `{"method":"error","params":{"message":"no capacity"}}`, "error: no capacity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin, _ := fakeCLI(t, "echo '{\"type\":\"thread.started\",\"thread_id\":\"t\"}'\necho '"+tc.event+"'")
+			bin, _ := fakeCodex(t, "echo '"+tc.event+"'")
 			agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
 			_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
 			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
@@ -380,11 +486,11 @@ func TestAFailedCodexTurnIsAnError(t *testing.T) {
 }
 
 func TestACodexStreamThatNeverEndsTheTurnIsAnError(t *testing.T) {
-	bin, _ := fakeCLI(t, `echo '{"type":"thread.started","thread_id":"t"}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"half a brief"}}'`)
+	bin, _ := fakeCodex(t, `echo '{"method":"item/completed","params":{"item":{"type":"agent_message","text":"half a brief"}}}'
+exit 0`)
 	agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
 	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "no_result") {
+	if err == nil || !strings.Contains(err.Error(), "ended without answering turn/completed") {
 		t.Fatalf("err = %v, want a stream that ended without saying", err)
 	}
 }
@@ -615,7 +721,7 @@ func TestTheSessionIsNotGivenFactoryOrVCSVariables(t *testing.T) {
 func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 	for name, tc := range sessionsByAgent() {
 		t.Run(name, func(t *testing.T) {
-			bin, record := fakeCLI(t, tc.answer)
+			bin, record := fakeProvider(t, name, tc.answer)
 			a := allProviderBins(bin)
 			a.Provider, a.Model, a.Effort = name, "chosen", "max"
 			a.Fallback = &CLIAgent{Provider: config.AgentClaude, Model: "fallback"}
@@ -623,7 +729,10 @@ func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := args(t, record)
-			wants := []string{"\n--model\nchosen\n"}
+			var wants []string
+			if name != config.AgentCodex {
+				wants = append(wants, "\n--model\nchosen\n")
+			}
 			switch name {
 			case config.AgentClaude:
 				// Claude can switch to another claude model itself; the
@@ -631,10 +740,14 @@ func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 				wants = append(wants, "\n--fallback-model\nfallback\n", "\n--effort\nmax\n", "\n--setting-sources\n\n")
 			case config.AgentCodex:
 				// Codex's levels stop at high, and there is no fallback
-				// model flag: the fallback is a session of its own.
-				wants = append(wants, "\nmodel_reasoning_effort=\"high\"\n", "\nfeatures.shell_tool=false\n", "\n--sandbox\nread-only\n")
+				// model flag: the fallback is a session of its own. The
+				// model and the sandbox are thread/start's own params now.
+				wants = append(wants, "\nmodel_reasoning_effort=\"high\"\n", "\nfeatures.shell_tool=false\n")
 				if strings.Contains(got, "--fallback-model") {
 					t.Errorf("codex was given claude's fallback flag:\n%s", got)
+				}
+				if ts := codexThreadStart(t, record); ts["sandbox"] != "read-only" || ts["model"] != "chosen" {
+					t.Errorf("thread/start params = %v, want sandbox read-only and model chosen", ts)
 				}
 			case config.AgentOpenCode:
 				wants = append(wants, "\n--agent\nbees-read-only\n")
@@ -656,7 +769,7 @@ func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 }
 
 func TestCodexReviewDisablesInheritedMCP(t *testing.T) {
-	bin, record := fakeCLI(t, codexAnswer)
+	bin, record := fakeCodex(t, codexAnswer)
 	data, err := os.ReadFile(bin)
 	if err != nil {
 		t.Fatal(err)
@@ -730,7 +843,7 @@ func TestCodexReviewMCPInventoryFailsClosed(t *testing.T) {
 		{"null", "echo null", "must be an array"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin, record := fakeCLI(t, codexAnswer)
+			bin, record := fakeCodex(t, codexAnswer)
 			data, err := os.ReadFile(bin)
 			if err != nil {
 				t.Fatal(err)
@@ -758,7 +871,7 @@ func TestCodexReviewMCPInventoryFailsClosed(t *testing.T) {
 // the session's own, and the fallback never runs.
 func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 	limited, limitedRecord := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
-	overloaded, overloadedRecord := fakeCLI(t, `echo '{"type":"error","message":"the model is overloaded"}'`)
+	overloaded, overloadedRecord := fakeCodex(t, `echo '{"method":"error","params":{"message":"the model is overloaded"}}'`)
 	answering, answeringRecord := fakeCLI(t, openCodeAnswer)
 	a := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{
 		Provider: config.AgentCodex, CodexBin: overloaded, Model: "gpt-first", Fallback: &CLIAgent{
@@ -778,7 +891,7 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 		record string
 		want   []string
 	}{
-		{overloadedRecord, []string{"\nexec\n", "\n--sandbox\nread-only\n", "\nfeatures.shell_tool=false\n"}},
+		{overloadedRecord, []string{"\napp-server\n", "\nfeatures.shell_tool=false\n"}},
 		{answeringRecord, []string{"\n--pure\n", "\n--agent\nbees-read-only\n"}},
 	} {
 		got := args(t, tc.record)
@@ -787,6 +900,9 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 				t.Errorf("the fallback escaped the floor, missing %q:%s", want, got)
 			}
 		}
+	}
+	if ts := codexThreadStart(t, overloadedRecord); ts["sandbox"] != "read-only" {
+		t.Errorf("the codex fallback escaped its read-only sandbox: %v", ts)
 	}
 	if got := args(t, answeringRecord); !strings.Contains(got, "\n--model\ngpt-last\n") {
 		t.Errorf("the last fallback ran another model:%s", got)

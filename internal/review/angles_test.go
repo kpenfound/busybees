@@ -408,7 +408,7 @@ func (p *progressRecorder) record(angle string, event AngleEvent) {
 // than run as claude with a codex thread id.
 func TestAnAngleThatFellBackIsRecordedUnderTheAgentThatAnswered(t *testing.T) {
 	limited, _ := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
-	answering, _ := fakeCLI(t, codexAnswer)
+	answering, _ := fakeCodex(t, codexAnswer)
 	agent := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{Provider: config.AgentCodex, CodexBin: answering, Model: "gpt-cheap"}}
 	angles := &Angles{Agent: agent, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir()}
 	runs, err := angles.Run(context.Background(), t.TempDir(), onlyAngle(t, AngleDocs), testBrief(), testDiff)
