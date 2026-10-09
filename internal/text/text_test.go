@@ -14,7 +14,7 @@ func TestCount(t *testing.T) {
 		{"two is plural", 2, "session", "2 sessions"},
 		{"singular multi-word noun", 1, "open issue", "1 open issue"},
 		{"plural multi-word noun", 3, "open issue", "3 open issues"},
-		{"negative count still pluralizes", -1, "warning", "-1 warnings"},
+		{"negative one is singular", -1, "warning", "-1 warning"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
