@@ -64,6 +64,15 @@ type codexRPCParams struct {
 	Sandbox               string `json:"sandbox"`
 }
 
+// codexRPCInputItem is one item of turn/start's params.input array. The
+// app-server protocol expects input as a sequence of typed items, not a
+// bare string; bees sends exactly one "text" item per turn, carrying the
+// turn's prompt verbatim.
+type codexRPCInputItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 // codexThreadStartParams builds thread/start's and thread/resume's
 // parameters from a turn's kind alone, so both requests always carry
 // exactly the same ones: cwd, model only when the profile named one,
@@ -516,7 +525,10 @@ func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, t
 	}
 	c.threadID = started.Thread.ID
 
-	result, err = c.call("turn/start", map[string]any{"threadId": c.threadID, "input": turn.Prompt})
+	result, err = c.call("turn/start", map[string]any{
+		"threadId": c.threadID,
+		"input":    []codexRPCInputItem{{Type: "text", Text: turn.Prompt}},
+	})
 	if err != nil {
 		return nil, err
 	}

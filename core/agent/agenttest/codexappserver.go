@@ -174,6 +174,34 @@ func CodexAppServer(t *testing.T, script CodexAppServerScript) (bin, record stri
 type codexWireMessage struct {
 	ID     json.RawMessage `json:"id,omitempty"`
 	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
+// codexTurnStartInvalidInput is the JSON-RPC -32600 error every fake `codex
+// app-server` in this repository answers a malformed `turn/start` with.
+const codexTurnStartInvalidInput = `invalid request: params.input must be a non-empty array of {"type":"text","text":<string>} items`
+
+// ValidateCodexTurnInput checks raw, turn/start's "input" parameter, against
+// the shape codexRPCRun (core/agent/codex_rpc.go) always sends: a non-empty
+// JSON array of items, each an object with a "type" of "text" and a string
+// "text". It returns nil when raw matches that shape, or a *CodexRPCError
+// with code -32600 when it does not — in particular when raw is a bare
+// string, the shape this validates against regressing to.
+func ValidateCodexTurnInput(raw json.RawMessage) *CodexRPCError {
+	invalid := &CodexRPCError{Code: -32600, Message: codexTurnStartInvalidInput}
+	var items []map[string]any
+	if err := json.Unmarshal(raw, &items); err != nil || len(items) == 0 {
+		return invalid
+	}
+	for _, item := range items {
+		if typ, ok := item["type"].(string); !ok || typ != "text" {
+			return invalid
+		}
+		if _, ok := item["text"].(string); !ok {
+			return invalid
+		}
+	}
+	return nil
 }
 
 // codexRecordEntry is one line of a fake `codex app-server`'s record file,
@@ -413,6 +441,15 @@ func RunCodexAppServer() int {
 		return 0
 	}
 	if script.ExitBefore == "turn/start" {
+		return 0
+	}
+	var turnParams struct {
+		Input json.RawMessage `json:"input"`
+	}
+	_ = json.Unmarshal(msg.Params, &turnParams)
+	if invalid := ValidateCodexTurnInput(turnParams.Input); invalid != nil {
+		respond(msg.ID, nil, invalid)
+		drain()
 		return 0
 	}
 	respond(msg.ID, map[string]any{"turn": map[string]any{"id": script.TurnID}}, nil)

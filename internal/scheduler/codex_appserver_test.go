@@ -32,6 +32,7 @@ type rpcMsg struct {
 	Method string         `json:"method"`
 	Params map[string]any `json:"params"`
 	Result map[string]any `json:"result"`
+	Error  map[string]any `json:"error"`
 }
 
 // startFakeCodexAppServer launches the test binary as `codex app-server`
@@ -91,6 +92,23 @@ func (c *rpcConn) notify(method string, params map[string]any) {
 	c.t.Helper()
 	if err := c.stdin.Encode(map[string]any{"jsonrpc": "2.0", "method": method, "params": params}); err != nil {
 		c.t.Fatal(err)
+	}
+}
+
+// requestRaw sends method as a request and returns the whole response
+// message, result or error, unlike request which only ever returns Result.
+func (c *rpcConn) requestRaw(method string, params map[string]any) rpcMsg {
+	c.t.Helper()
+	c.nextID++
+	id := c.nextID
+	if err := c.stdin.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+		c.t.Fatal(err)
+	}
+	for {
+		msg := c.read()
+		if msg.ID != nil && *msg.ID == id {
+			return msg
+		}
 	}
 }
 
@@ -186,7 +204,7 @@ func TestFakeCodexAppServerSpeaksTheConversation(t *testing.T) {
 	if threadID == "" {
 		t.Fatalf("thread/start result carries no thread id: %+v", started)
 	}
-	conn.request("turn/start", map[string]any{"threadId": threadID, "input": "move #7 to ready"})
+	conn.request("turn/start", map[string]any{"threadId": threadID, "input": []map[string]any{{"type": "text", "text": "move #7 to ready"}}})
 	var sawToolCall, sawAgentMessage bool
 	for {
 		msg := conn.read()
@@ -231,7 +249,7 @@ func TestFakeCodexAppServerSpeaksTheConversation(t *testing.T) {
 	if got, _ := resumedThread["id"].(string); got != threadID {
 		t.Fatalf("thread/resume result: %+v, want thread id %q", resumeResult, threadID)
 	}
-	resumed.request("turn/start", map[string]any{"threadId": threadID, "input": "move #9 to ready"})
+	resumed.request("turn/start", map[string]any{"threadId": threadID, "input": []map[string]any{{"type": "text", "text": "move #9 to ready"}}})
 	resumed.untilMethod("turn/completed")
 	if got := touchedIssues(t, resumeSessionDir); got != "9\n" {
 		t.Fatalf("touched issues after thread/resume's turn/start: %q", got)
@@ -239,5 +257,32 @@ func TestFakeCodexAppServerSpeaksTheConversation(t *testing.T) {
 	edits = readGHEdits(t, stateDir)
 	if len(edits) != 2 || edits[1].Number != 9 {
 		t.Fatalf("gh edits after thread/resume's turn/start: %+v", edits)
+	}
+}
+
+// TestFakeCodexAppServerRejectsMalformedTurnInput checks that
+// fakeCodexAppServer answers a turn/start whose input regresses to a bare
+// string with JSON-RPC error -32600, and never runs the scripted role
+// action or reports turn/completed for that turn.
+func TestFakeCodexAppServerRejectsMalformedTurnInput(t *testing.T) {
+	sessionDir, stateDir := t.TempDir(), t.TempDir()
+
+	conn := startFakeCodexAppServer(t, config.RoleProjectManager, sessionDir, stateDir, "FAKE_TRIAGE=7")
+	conn.request("initialize", map[string]any{"clientInfo": map[string]any{"name": "bees", "version": "0"}})
+	conn.notify("initialized", nil)
+	conn.request("config/read", map[string]any{"cwd": sessionDir})
+	started := conn.request("thread/start", map[string]any{"cwd": sessionDir, "developerInstructions": "be the project manager"})
+	thread, _ := started["thread"].(map[string]any)
+	threadID, _ := thread["id"].(string)
+
+	resp := conn.requestRaw("turn/start", map[string]any{"threadId": threadID, "input": "move #7 to ready"})
+	if resp.Error == nil || resp.Error["code"] != float64(-32600) {
+		t.Fatalf("turn/start with a string input: %+v, want a -32600 error", resp)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, session.TouchedFile)); !os.IsNotExist(err) {
+		t.Fatalf("scripted role action ran after a malformed turn/start: touched file stat err=%v", err)
+	}
+	if _, ok, _ := session.ReadOutcome(sessionDir); ok {
+		t.Fatalf("scripted role action recorded an outcome after a malformed turn/start")
 	}
 }

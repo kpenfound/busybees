@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -284,13 +286,30 @@ kill -9 $$
 // speaks before a test's own notifications: it answers initialize, reads
 // the initialized notification, then thread/start with threadID and
 // turn/start with turnID, each echoing the request's own id, the way the
-// real server answers them.
+// real server answers them. turn/start's own line is checked against the
+// same shape codexRPCRun must send (core/agent/codex_rpc.go): a non-empty
+// array of {"type":"text","text":<string>} items, not a bare string. A
+// malformed one gets the JSON-RPC -32600 error every fake `codex
+// app-server` in this repository answers it with, and the script exits
+// without running the test's own notifications.
 func codexAppServerHandshake(threadID, turnID string) string {
 	return `reqid() { sed -n 's/.*"id":\([0-9]*\).*/\1/p'; }
 IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$(printf '%s' "$line" | reqid)"
 IFS= read -r line
 IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"` + threadID + `"}}}\n' "$(printf '%s' "$line" | reqid)"
-IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"` + turnID + `"}}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line
+id="$(printf '%s' "$line" | reqid)"
+case "$line" in
+  *'"input":[]'*) valid=0 ;;
+  *'"input":['*'"type":"text"'*'"text":'*) valid=1 ;;
+  *) valid=0 ;;
+esac
+if [ "$valid" = 1 ]; then
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"` + turnID + `"}}}\n' "$id"
+else
+  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32600,"message":"invalid request: params.input must be a non-empty array of typed text items"}}\n' "$id"
+  exit 0
+fi
 `
 }
 
@@ -301,6 +320,74 @@ IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"` + 
 func fakeCodexAppServer(t *testing.T, threadID, turnID, body string) string {
 	t.Helper()
 	return agenttest.Script(t, "codex", codexAppServerHandshake(threadID, turnID)+body)
+}
+
+// TestCodexAppServerHandshakeRejectsStringInput drives
+// codexAppServerHandshake's fake directly over pipes, the way
+// core/agent's own tests use it through fakeCodexAppServer, and checks
+// that a turn/start whose input is a bare string — the shape codex_rpc.go
+// must never regress to — gets JSON-RPC error -32600, with the script's
+// own notifications never sent.
+func TestCodexAppServerHandshakeRejectsStringInput(t *testing.T) {
+	bin := fakeCodexAppServer(t, "thread-1", "turn-1", "echo '{\"jsonrpc\":\"2.0\",\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'\ncat >/dev/null\n")
+	cmd := exec.Command(bin)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	send := func(v map[string]any) {
+		v["jsonrpc"] = "2.0"
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stdin.Write(append(b, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recv := func() map[string]any {
+		if !sc.Scan() {
+			t.Fatalf("the fake exited without answering: %v", sc.Err())
+		}
+		var msg map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &msg); err != nil {
+			t.Fatalf("decode %q: %v", sc.Text(), err)
+		}
+		return msg
+	}
+
+	send(map[string]any{"id": 1, "method": "initialize"})
+	recv()
+	send(map[string]any{"method": "initialized"})
+	send(map[string]any{"id": 2, "method": "thread/start", "params": map[string]any{"cwd": "/work"}})
+	recv()
+	send(map[string]any{"id": 3, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": "TASK"}})
+	msg := recv()
+	errv, _ := msg["error"].(map[string]any)
+	if errv == nil || errv["code"] != float64(-32600) {
+		t.Fatalf("turn/start answer: %v, want a -32600 error", msg)
+	}
+	if _, ok := msg["result"]; ok {
+		t.Fatalf("an error answer also carried a result: %v", msg)
+	}
+
+	if sc.Scan() {
+		t.Fatalf("the fake ran its scripted turn despite the malformed input: %s", sc.Text())
+	}
+	_ = stdin.Close()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("fake exit: %v", err)
+	}
 }
 
 // codexRole is a role resolved with agent = "codex".
@@ -1018,6 +1105,70 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	}
 	if !slices.Equal(args[0], args[1]) {
 		t.Errorf("the resume id changed claude's command line beyond the resume flags:\n%q\n%q", args[0], args[1])
+	}
+}
+
+// TestCodexSessionCompletesThroughTheSharedFakeNewThread drives a whole
+// Codex session through core/agent's Runner against the shared fake
+// `codex app-server` (agenttest.CodexAppServer) for a new thread: the
+// session completes without error, with its id from thread/start's
+// answer, at least one recorded turn (NumTurns, from the fake's
+// item/completed) and the agent's message as the result (spec#7).
+func TestCodexSessionCompletesThroughTheSharedFakeNewThread(t *testing.T) {
+	bin, _ := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+		ThreadID: "thread-e2e-new",
+		TurnID:   "turn-1",
+		Actions: []agenttest.CodexAppServerAction{
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agent_message", "text": "the new-thread brief"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
+		},
+	})
+	r := &Runner{CodexBin: bin, SessionsDir: t.TempDir()}
+	req := grantAll(Request{Name: "n", Profile: codexRole("gpt-5"), Workspace: fakeWorkspace{dir: realTempDir(t)}, Prompt: "TASK"}, "FAKE_CODEX_APP_SERVER*")
+	res, err := r.Run(context.Background(), req)
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	if res.ClaudeID != "thread-e2e-new" {
+		t.Errorf("session id = %q, want thread-e2e-new", res.ClaudeID)
+	}
+	if res.NumTurns < 1 {
+		t.Errorf("NumTurns = %d, want at least one recorded turn", res.NumTurns)
+	}
+	if res.ResultText != "the new-thread brief" {
+		t.Errorf("ResultText = %q, want the fake's agent message", res.ResultText)
+	}
+}
+
+// TestCodexSessionCompletesThroughTheSharedFakeResumedThread is
+// TestCodexSessionCompletesThroughTheSharedFakeNewThread for a resumed
+// thread (ResumeID set, thread/resume in place of thread/start): the
+// session completes without error, with its id from thread/resume's
+// answer, at least one recorded turn and the agent's message as the
+// result (spec#7).
+func TestCodexSessionCompletesThroughTheSharedFakeResumedThread(t *testing.T) {
+	bin, _ := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+		ResumeID: "thread-e2e-resumed",
+		TurnID:   "turn-1",
+		Actions: []agenttest.CodexAppServerAction{
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agent_message", "text": "the resumed-thread brief"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
+		},
+	})
+	r := &Runner{CodexBin: bin, SessionsDir: t.TempDir()}
+	req := grantAll(Request{Name: "n", Profile: codexRole("gpt-5"), Workspace: fakeWorkspace{dir: realTempDir(t)}, Prompt: "TASK", ResumeID: "earlier-thread"}, "FAKE_CODEX_APP_SERVER*")
+	res, err := r.Run(context.Background(), req)
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	if res.ClaudeID != "thread-e2e-resumed" {
+		t.Errorf("session id = %q, want thread-e2e-resumed", res.ClaudeID)
+	}
+	if res.NumTurns < 1 {
+		t.Errorf("NumTurns = %d, want at least one recorded turn", res.NumTurns)
+	}
+	if res.ResultText != "the resumed-thread brief" {
+		t.Errorf("ResultText = %q, want the fake's agent message", res.ResultText)
 	}
 }
 

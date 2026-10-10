@@ -304,11 +304,23 @@ func fakeCodexReviewAppServer() {
 			respond(msg.ID, map[string]any{"thread": map[string]any{"id": fakeCodexThreadID}})
 		case "turn/start":
 			var p struct {
-				Input string `json:"input"`
+				Input json.RawMessage `json:"input"`
 			}
 			_ = json.Unmarshal(msg.Params, &p)
+			if invalid := agenttest.ValidateCodexTurnInput(p.Input); invalid != nil {
+				send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": invalid})
+				continue
+			}
+			var items []struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(p.Input, &items)
+			var prompt string
+			if len(items) > 0 {
+				prompt = items[0].Text
+			}
 			respond(msg.ID, map[string]any{"turn": map[string]any{"id": "fake-turn"}})
-			_, answer, ok := fakeReviewAnswer(p.Input, model, sandbox)
+			_, answer, ok := fakeReviewAnswer(prompt, model, sandbox)
 			if !ok {
 				notify("error", map[string]any{"message": "the model is overloaded"})
 				return
@@ -871,6 +883,9 @@ func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail f
 	if v := os.Getenv("FAKE_RESULT_TEXT"); v != "" {
 		text = v
 	}
+	respondError := func(id json.RawMessage, errv *agenttest.CodexRPCError) {
+		send(map[string]any{"jsonrpc": "2.0", "id": id, "error": errv})
+	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 	for sc.Scan() {
@@ -899,6 +914,14 @@ func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail f
 			}
 			respond(msg.ID, map[string]any{"thread": map[string]any{"id": fakeCodexThreadID}})
 		case "turn/start":
+			var p struct {
+				Input json.RawMessage `json:"input"`
+			}
+			_ = json.Unmarshal(msg.Params, &p)
+			if invalid := agenttest.ValidateCodexTurnInput(p.Input); invalid != nil {
+				respondError(msg.ID, invalid)
+				continue
+			}
 			respond(msg.ID, map[string]any{"turn": map[string]any{"id": "fake-turn"}})
 			outcome := runFakeRole(role, fakeCodexThreadID, sessionDir, stateDir, box, fail, git, counter)
 			if err := session.WriteOutcome(sessionDir, outcome); err != nil {

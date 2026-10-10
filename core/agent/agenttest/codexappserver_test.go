@@ -97,6 +97,12 @@ func (c *codexConversation) closeStdin() {
 	}
 }
 
+// validTurnInput is the turn/start "input" every one of this file's
+// conversations sends, except where a test scripts a malformed one on
+// purpose: a non-empty array of one {"type":"text","text":<string>} item,
+// the shape codexRPCRun (core/agent/codex_rpc.go) always sends.
+var validTurnInput = []map[string]any{{"type": "text", "text": "TASK"}}
+
 // handshake drives the fake through initialize and config/read, common to
 // every conversation.
 func (c *codexConversation) handshake() {
@@ -137,7 +143,7 @@ func TestCodexAppServerFullConversation(t *testing.T) {
 		t.Fatalf("thread/start answer: %v", msg)
 	}
 
-	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": "TASK"}})
+	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": validTurnInput}})
 	msg = c.recv()
 	turn, _ := msg["result"].(map[string]any)["turn"].(map[string]any)
 	if turn["id"] != "turn-1" {
@@ -202,7 +208,7 @@ func TestCodexAppServerFullConversationWithoutConfigRead(t *testing.T) {
 		t.Fatalf("thread/start answer: %v", msg)
 	}
 
-	c.send(map[string]any{"id": 3, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": "TASK"}})
+	c.send(map[string]any{"id": 3, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": validTurnInput}})
 	c.recv()
 
 	if msg = c.recv(); msg["method"] != "turn/completed" {
@@ -212,6 +218,70 @@ func TestCodexAppServerFullConversationWithoutConfigRead(t *testing.T) {
 	c.closeStdin()
 	if err := c.wait(); err != nil {
 		t.Fatalf("fake codex app-server exit: %v", err)
+	}
+}
+
+// TestCodexAppServerRejectsMalformedTurnStartInput drives a fake `codex
+// app-server` through initialize and thread/start, then a turn/start whose
+// "input" does not match the shape codexRPCRun always sends — a non-empty
+// array of {"type":"text","text":<string>} items — table-tested over a
+// bare string (the shape codex_rpc.go must never regress to), an empty
+// array, an item missing "type", an item whose "type" is not "text" and an
+// item missing "text". Each case must get JSON-RPC error -32600, no
+// result, and the scripted turn must never run: the fake must close its
+// stdout once it has sent the error, with no action notification behind
+// it.
+func TestCodexAppServerRejectsMalformedTurnStartInput(t *testing.T) {
+	cases := []struct {
+		name  string
+		input any
+	}{
+		{"a bare string", "TASK"},
+		{"an empty array", []any{}},
+		{"an item missing type", []map[string]any{{"text": "TASK"}}},
+		{"an item with the wrong type", []map[string]any{{"type": "image", "text": "TASK"}}},
+		{"an item missing text", []map[string]any{{"type": "text"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			script := agenttest.CodexAppServerScript{
+				ThreadID: "thread-1",
+				TurnID:   "turn-1",
+				Actions: []agenttest.CodexAppServerAction{
+					{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
+				},
+			}
+			bin, record := agenttest.CodexAppServer(t, script)
+			c := startCodex(t, bin, "app-server")
+			c.handshake()
+			c.send(map[string]any{"id": 3, "method": "thread/start", "params": map[string]any{"cwd": "/work"}})
+			c.recv()
+
+			c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": tc.input}})
+			msg := c.recv()
+			errv, _ := msg["error"].(map[string]any)
+			if errv == nil || errv["code"] != float64(-32600) {
+				t.Fatalf("turn/start answer: %v, want a -32600 error", msg)
+			}
+			if _, ok := msg["result"]; ok {
+				t.Fatalf("an error answer also carried a result: %v", msg)
+			}
+
+			c.closeStdin()
+			if c.out.Scan() {
+				t.Fatalf("the fake ran its scripted turn despite the malformed input: %s", c.out.Text())
+			}
+			if err := c.wait(); err != nil {
+				t.Fatalf("fake codex app-server exit: %v", err)
+			}
+
+			rec := agenttest.ReadCodexAppServerRecord(t, record)
+			for _, line := range rec.Lines {
+				if strings.Contains(line, "turn/completed") {
+					t.Errorf("the scripted turn/completed was sent despite the malformed input: %v", rec.Lines)
+				}
+			}
+		})
 	}
 }
 
@@ -259,7 +329,7 @@ func TestCodexAppServerServerRequest(t *testing.T) {
 	c.handshake()
 	c.send(map[string]any{"id": 3, "method": "thread/start", "params": map[string]any{"cwd": "/work"}})
 	c.recv()
-	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1"}})
+	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": validTurnInput}})
 	c.recv()
 
 	msg := c.recv()
@@ -352,7 +422,7 @@ func TestCodexAppServerInterrupt(t *testing.T) {
 	c.handshake()
 	c.send(map[string]any{"id": 3, "method": "thread/start", "params": map[string]any{"cwd": "/work"}})
 	c.recv()
-	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1"}})
+	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": validTurnInput}})
 	c.recv()
 
 	c.send(map[string]any{"id": 5, "method": "turn/interrupt"})
@@ -385,7 +455,7 @@ func TestCodexAppServerIgnoresInterruptByDefault(t *testing.T) {
 	c.handshake()
 	c.send(map[string]any{"id": 3, "method": "thread/start", "params": map[string]any{"cwd": "/work"}})
 	c.recv()
-	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1"}})
+	c.send(map[string]any{"id": 4, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": validTurnInput}})
 	c.recv()
 
 	c.send(map[string]any{"id": 5, "method": "turn/interrupt"})

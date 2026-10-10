@@ -1,9 +1,12 @@
 package session
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -308,13 +311,24 @@ func TestSbxDaggerContract(t *testing.T) {
 	// An ordinary codex turn speaks the app-server JSON-RPC conversation
 	// (initialize, thread/start, turn/start, turn/completed) rather than
 	// codex exec's event stream; this fake answers each request by id in
-	// turn, the way core/agent's own codex app-server tests do.
+	// turn, the way core/agent's own codex app-server tests do. turn/start's
+	// input is checked against the typed one-item array codexRPCRun always
+	// sends: a malformed input (for example a bare string) gets -32600
+	// instead of a turn result, and the scripted turn never runs.
 	codex := agenttest.Script(t, "codex", `reqid() { sed -n 's/.*"id":\([0-9]*\).*/\1/p'; }
 IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$(printf '%s' "$line" | reqid)"
 IFS= read -r line
 IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"t1"}}}\n' "$(printf '%s' "$line" | reqid)"
-IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-1"}}}\n' "$(printf '%s' "$line" | reqid)"
-echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+IFS= read -r line
+case "$line" in
+*'"input":[{"type":"text","text":'*)
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-1"}}}\n' "$(printf '%s' "$line" | reqid)"
+  echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+  ;;
+*)
+  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32600,"message":"invalid request: params.input must be a non-empty array of typed items"}}\n' "$(printf '%s' "$line" | reqid)"
+  ;;
+esac
 cat > /dev/null
 `)
 	r := newRunner(t, "")
@@ -376,5 +390,86 @@ sandbox_dagger_version = "v0.20.5"
 	env, _ := os.ReadFile(filepath.Join(res.SessionDir, "sbx-exec-env.txt"))
 	if !strings.Contains(string(env), agent.EnvDaggerRunnerHost+"=tcp://host.docker.internal:1234\n") {
 		t.Errorf("sbx client env lacks the engine address:\n%s", env)
+	}
+}
+
+// TestSbxDaggerContractCodexFakeRejectsMalformedTurnInput drives the exact
+// `codex` fake TestSbxDaggerContract wires up as r.CodexBin, over its own
+// pipes rather than through the runner, to show it answers a turn/start
+// whose input regresses to a bare string with JSON-RPC error -32600 and
+// never reports turn/completed for that turn.
+func TestSbxDaggerContractCodexFakeRejectsMalformedTurnInput(t *testing.T) {
+	codex := agenttest.Script(t, "codex", `reqid() { sed -n 's/.*"id":\([0-9]*\).*/\1/p'; }
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"t1"}}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line
+case "$line" in
+*'"input":[{"type":"text","text":'*)
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-1"}}}\n' "$(printf '%s' "$line" | reqid)"
+  echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+  ;;
+*)
+  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32600,"message":"invalid request: params.input must be a non-empty array of typed items"}}\n' "$(printf '%s' "$line" | reqid)"
+  ;;
+esac
+cat > /dev/null
+`)
+	cmd := exec.Command(codex)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Wait() })
+
+	enc := json.NewEncoder(stdin)
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
+	readLine := func() map[string]any {
+		if !sc.Scan() {
+			t.Fatalf("fake codex: stdout closed early: %v", sc.Err())
+		}
+		var v map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &v); err != nil {
+			t.Fatalf("decode %q: %v", sc.Text(), err)
+		}
+		return v
+	}
+
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	readLine() // initialize's result
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "initialized"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": map[string]any{"cwd": "/session"}}); err != nil {
+		t.Fatal(err)
+	}
+	readLine() // thread/start's result
+	if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": map[string]any{"threadId": "t1", "input": "move #7 to ready"}}); err != nil {
+		t.Fatal(err)
+	}
+	resp := readLine()
+	errv, _ := resp["error"].(map[string]any)
+	if errv == nil || errv["code"] != float64(-32600) {
+		t.Fatalf("turn/start with a string input: %+v, want a -32600 error", resp)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for sc.Scan() {
+		var v map[string]any
+		if json.Unmarshal(sc.Bytes(), &v) == nil && v["method"] == "turn/completed" {
+			t.Fatalf("fake codex reported turn/completed after a malformed turn/start: %v", v)
+		}
 	}
 }

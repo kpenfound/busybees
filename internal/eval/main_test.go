@@ -293,15 +293,19 @@ func runFakeRole(fail func(error)) session.Outcome {
 // item/completed and turn/completed notifications instead of exec's own
 // stream. A thread/start whose sandbox is "read-only" is a review session,
 // as the sandbox table gives a restricted turn; any other sandbox is an
-// ordinary role session. It exits when the client closes stdin, as the
-// real app server does.
+// ordinary role session. turn/start's input is checked against the same
+// shape codexRPCRun must send (core/agent/codex_rpc.go): a non-empty array
+// of {"type":"text","text":<string>} items, not a bare string. A malformed
+// one gets the JSON-RPC -32600 error every fake `codex app-server` in this
+// repository answers it with, and the scripted turn does not run. It
+// exits when the client closes stdin, as the real app server does.
 func fakeCodexAppServer(fail func(error)) {
 	type message struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
 		Params struct {
-			Sandbox string `json:"sandbox"`
-			Input   string `json:"input"`
+			Sandbox string          `json:"sandbox"`
+			Input   json.RawMessage `json:"input"`
 		} `json:"params"`
 	}
 	in := bufio.NewScanner(os.Stdin)
@@ -333,10 +337,18 @@ func fakeCodexAppServer(fail func(error)) {
 			review = msg.Params.Sandbox == "read-only"
 			send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"thread": map[string]any{"id": threadID}}})
 		case "turn/start":
+			if invalid := agenttest.ValidateCodexTurnInput(msg.Params.Input); invalid != nil {
+				send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": invalid})
+				continue
+			}
 			send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
+			var items []struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(msg.Params.Input, &items)
 			var text string
 			if review {
-				text = reviewAnswer(msg.Params.Input)
+				text = reviewAnswer(items[0].Text)
 			} else {
 				text = runFakeRole(fail).Status
 			}

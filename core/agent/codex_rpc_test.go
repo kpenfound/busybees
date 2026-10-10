@@ -290,6 +290,130 @@ func TestCodexRPCConversation(t *testing.T) {
 	}
 }
 
+// codexTurnStartInput decodes raw turn/start params into its threadId and
+// its input array, so a test can check the array's shape without
+// tolerating a regression to a bare string: unmarshaling raw into this
+// struct fails outright if "input" is not an array.
+type codexTurnStartInput struct {
+	ThreadID string `json:"threadId"`
+	Input    []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"input"`
+}
+
+// TestCodexRPCTurnStartInputIsATypedTextArray asserts, for a new thread,
+// that turn/start's "input" is a one-item JSON array of
+// {"type":"text","text":<prompt>}, with the prompt carried byte for byte —
+// multi-line, with quotes, a backslash, non-ASCII characters and
+// surrounding whitespace — and that "threadId" is the id thread/start's
+// own answer carried (spec#1, spec#3). Decoding raw params.input into a
+// string, the shape this must never regress to, must fail.
+func TestCodexRPCTurnStartInputIsATypedTextArray(t *testing.T) {
+	const prompt = "  first line\nsecond \"line\" with a \\backslash\\ and emoji 🐝\nthird line\t\n"
+	var turnStartParams json.RawMessage
+	turn := codexRPCTurn{Cwd: "/work", Prompt: prompt}
+	out, err, _ := runCodexFakeConversation(t, turn, func(f *codexFakeRPC) {
+		l, _ := f.recv() // initialize
+		f.respond(l.ID, map[string]any{})
+		f.recv()        // initialized
+		l, _ = f.recv() // thread/start
+		f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "thread-new"}})
+		l, _ = f.recv() // turn/start
+		turnStartParams = l.Params
+		f.respond(l.ID, map[string]any{"turn": map[string]any{"id": "turn-1"}})
+		f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
+		f.recv()
+	})
+	if err != nil {
+		t.Fatalf("codexRPCRun: %v", err)
+	}
+	if out.SessionID != "thread-new" {
+		t.Fatalf("session did not finish normally: %+v", out)
+	}
+
+	var params codexTurnStartInput
+	if err := json.Unmarshal(turnStartParams, &params); err != nil {
+		t.Fatalf("decode turn/start params: %v", err)
+	}
+	if params.ThreadID != "thread-new" {
+		t.Errorf("threadId = %q, want thread-new", params.ThreadID)
+	}
+	if len(params.Input) != 1 {
+		t.Fatalf("input = %+v, want exactly one item", params.Input)
+	}
+	if params.Input[0].Type != "text" {
+		t.Errorf("input[0].type = %q, want text", params.Input[0].Type)
+	}
+	if params.Input[0].Text != prompt {
+		t.Errorf("input[0].text = %q, want %q", params.Input[0].Text, prompt)
+	}
+
+	var regressed struct {
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal(turnStartParams, &regressed); err == nil {
+		t.Error("turn/start params.input decoded as a bare string; it must be an array")
+	}
+}
+
+// TestCodexRPCResumeTurnStartInputIsATypedTextArray is
+// TestCodexRPCTurnStartInputIsATypedTextArray for a resumed thread
+// (ResumeID set, thread/resume in place of thread/start): turn/start's
+// input is still the one-item typed array, the prompt still byte for
+// byte, and threadId is the id thread/resume's own answer carried
+// (spec#2, spec#3).
+func TestCodexRPCResumeTurnStartInputIsATypedTextArray(t *testing.T) {
+	const prompt = " \tcontinue, please\nwatch for \"quotes\" and a \\slash\\ and 日本語\n "
+	var turnStartParams json.RawMessage
+	turn := codexRPCTurn{Cwd: "/work", Prompt: prompt, ResumeID: "earlier-thread"}
+	out, err, _ := runCodexFakeConversation(t, turn, func(f *codexFakeRPC) {
+		l, _ := f.recv() // initialize
+		f.respond(l.ID, map[string]any{})
+		f.recv()        // initialized
+		l, _ = f.recv() // thread/resume
+		if l.Method != "thread/resume" {
+			t.Errorf("method = %q, want thread/resume", l.Method)
+		}
+		f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "thread-resumed"}})
+		l, _ = f.recv() // turn/start
+		turnStartParams = l.Params
+		f.respond(l.ID, map[string]any{"turn": map[string]any{"id": "turn-1"}})
+		f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
+		f.recv()
+	})
+	if err != nil {
+		t.Fatalf("codexRPCRun: %v", err)
+	}
+	if out.SessionID != "thread-resumed" {
+		t.Fatalf("session did not finish normally: %+v", out)
+	}
+
+	var params codexTurnStartInput
+	if err := json.Unmarshal(turnStartParams, &params); err != nil {
+		t.Fatalf("decode turn/start params: %v", err)
+	}
+	if params.ThreadID != "thread-resumed" {
+		t.Errorf("threadId = %q, want thread-resumed", params.ThreadID)
+	}
+	if len(params.Input) != 1 {
+		t.Fatalf("input = %+v, want exactly one item", params.Input)
+	}
+	if params.Input[0].Type != "text" {
+		t.Errorf("input[0].type = %q, want text", params.Input[0].Type)
+	}
+	if params.Input[0].Text != prompt {
+		t.Errorf("input[0].text = %q, want %q", params.Input[0].Text, prompt)
+	}
+
+	var regressed struct {
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal(turnStartParams, &regressed); err == nil {
+		t.Error("turn/start params.input decoded as a bare string; it must be an array")
+	}
+}
+
 // TestCodexRPCResume asserts thread/resume is used, with the same
 // parameters thread/start would carry, when ResumeID is set.
 func TestCodexRPCResume(t *testing.T) {

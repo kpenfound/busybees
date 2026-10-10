@@ -138,7 +138,7 @@ func TestFakeCodexAppServerAnswersARubricOverAFullConversation(t *testing.T) {
 		t.Fatalf("thread/start result: %s (%v)", thread, err)
 	}
 
-	c.request("turn/start", map[string]any{"threadId": started.Thread.ID, "input": "## The rubric\nScore it."})
+	c.request("turn/start", map[string]any{"threadId": started.Thread.ID, "input": []map[string]any{{"type": "text", "text": "## The rubric\nScore it."}}})
 
 	method, item, _ := c.notification()
 	if method != "item/completed" {
@@ -179,7 +179,7 @@ func TestFakeCodexAppServerRunsAnOrdinaryRoleOverResume(t *testing.T) {
 		t.Fatalf("thread/resume result: %s (%v)", thread, err)
 	}
 
-	c.request("turn/start", map[string]any{"threadId": resumed.Thread.ID, "input": "do the role's work"})
+	c.request("turn/start", map[string]any{"threadId": resumed.Thread.ID, "input": []map[string]any{{"type": "text", "text": "do the role's work"}}})
 
 	method, item, _ := c.notification()
 	if method != "item/completed" || item != "done" {
@@ -192,5 +192,50 @@ func TestFakeCodexAppServerRunsAnOrdinaryRoleOverResume(t *testing.T) {
 	o, ok, err := session.ReadOutcome(sessionDir)
 	if err != nil || !ok || o.Status != "done" {
 		t.Fatalf("outcome: %+v ok=%v err=%v", o, ok, err)
+	}
+}
+
+// TestFakeCodexAppServerRejectsStringTurnStartInput checks that a
+// turn/start whose input is a bare string — the shape codex_rpc.go must
+// never regress to — gets JSON-RPC error -32600, with no scripted turn
+// run afterwards.
+func TestFakeCodexAppServerRejectsStringTurnStartInput(t *testing.T) {
+	c := startFakeAppServer(t)
+	c.request("initialize", map[string]any{"clientInfo": map[string]any{"name": "bees", "version": "0"}})
+	c.notify("initialized", nil)
+	thread := c.request("thread/start", map[string]any{"cwd": ".", "sandbox": "read-only"})
+	var started struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(thread, &started); err != nil || started.Thread.ID == "" {
+		t.Fatalf("thread/start result: %s (%v)", thread, err)
+	}
+
+	c.next++
+	id := c.next
+	if err := c.enc.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": "turn/start", "params": map[string]any{"threadId": started.Thread.ID, "input": "## The rubric\nScore it."}}); err != nil {
+		t.Fatal(err)
+	}
+	var msg struct {
+		ID    int `json:"id"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Result json.RawMessage `json:"result"`
+	}
+	if !c.in.Scan() {
+		t.Fatalf("turn/start: the app server ended without answering: %v", c.in.Err())
+	}
+	if err := json.Unmarshal(c.in.Bytes(), &msg); err != nil {
+		t.Fatalf("turn/start: decode response: %v (%s)", err, c.in.Text())
+	}
+	if msg.Error == nil || msg.Error.Code != -32600 {
+		t.Fatalf("turn/start answer: %+v, want a -32600 error", msg)
+	}
+	if msg.Result != nil {
+		t.Fatalf("an error answer also carried a result: %+v", msg)
 	}
 }

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,7 +100,12 @@ func fakeLog(t *testing.T, body string) (bin, record string) {
 // gives up on it), which ends the fake; a scenario that must end the
 // stream itself (one that never completes the turn) exits from within
 // afterTurnStart instead. The thread id is always "thread-9", read back
-// the same way the exec-era fake's thread id was.
+// the same way the exec-era fake's thread id was. turn/start's own line is
+// checked against the same shape codexRPCRun must send: a non-empty array
+// of {"type":"text","text":<string>} items, not a bare string. A
+// malformed one gets the JSON-RPC -32600 error every fake `codex
+// app-server` in this repository answers it with, and afterTurnStart does
+// not run.
 //
 // Invoked as `codex mcp list --json ...` instead — a restricted turn's
 // inventory, a process of its own apart from the conversation above — it
@@ -126,8 +132,17 @@ func fakeCodex(t *testing.T, afterTurnStart string) (bin, record string) {
 		"    initialize) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{}}\\n' \"$id\" ;;\n" +
 		"    thread/start|thread/resume) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"thread\":{\"id\":\"thread-9\"}}}\\n' \"$id\" ;;\n" +
 		"    turn/start)\n" +
-		"      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"turn\":{\"id\":\"turn-1\"}}}\\n' \"$id\"\n" +
+		"      case \"$line\" in\n" +
+		"        *'\"input\":[]'*) valid=0 ;;\n" +
+		"        *'\"input\":['*'\"type\":\"text\"'*'\"text\":'*) valid=1 ;;\n" +
+		"        *) valid=0 ;;\n" +
+		"      esac\n" +
+		"      if [ \"$valid\" = 1 ]; then\n" +
+		"        printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"turn\":{\"id\":\"turn-1\"}}}\\n' \"$id\"\n" +
 		afterTurnStart + "\n" +
+		"      else\n" +
+		"        printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{\"code\":-32600,\"message\":\"invalid request: params.input must be a non-empty array of typed text items\"}}\\n' \"$id\"\n" +
+		"      fi\n" +
 		"      ;;\n" +
 		"  esac\n" +
 		"done\n"
@@ -135,6 +150,66 @@ func fakeCodex(t *testing.T, afterTurnStart string) (bin, record string) {
 		t.Fatal(err)
 	}
 	return bin, record
+}
+
+// TestFakeCodexRejectsStringTurnStartInput drives a fakeCodex directly over
+// pipes, bypassing CLIAgent, and checks that a turn/start whose input is a
+// bare string — the shape codex_rpc.go must never regress to — gets
+// JSON-RPC error -32600, with afterTurnStart's notifications never sent.
+func TestFakeCodexRejectsStringTurnStartInput(t *testing.T) {
+	bin, _ := fakeCodex(t, codexAnswer)
+	cmd := exec.Command(bin)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	send := func(v map[string]any) {
+		v["jsonrpc"] = "2.0"
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stdin.Write(append(b, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recv := func() map[string]any {
+		if !sc.Scan() {
+			t.Fatalf("the fake exited without answering: %v", sc.Err())
+		}
+		var msg map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &msg); err != nil {
+			t.Fatalf("decode %q: %v", sc.Text(), err)
+		}
+		return msg
+	}
+
+	send(map[string]any{"id": 1, "method": "initialize"})
+	recv()
+	send(map[string]any{"method": "initialized"})
+	send(map[string]any{"id": 2, "method": "thread/start", "params": map[string]any{"cwd": "/work"}})
+	recv()
+	send(map[string]any{"id": 3, "method": "turn/start", "params": map[string]any{"threadId": "thread-9", "input": "do it"}})
+	msg := recv()
+	errv, _ := msg["error"].(map[string]any)
+	if errv == nil || errv["code"] != float64(-32600) {
+		t.Fatalf("turn/start answer: %v, want a -32600 error", msg)
+	}
+
+	_ = stdin.Close()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("fake exit: %v", err)
+	}
 }
 
 func recorded(t *testing.T, record, what string) string {
