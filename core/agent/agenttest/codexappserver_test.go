@@ -127,7 +127,7 @@ func TestCodexAppServerFullConversation(t *testing.T) {
 		ThreadID: "thread-1",
 		TurnID:   "turn-1",
 		Actions: []agenttest.CodexAppServerAction{
-			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agent_message", "text": "hi"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agentMessage", "text": "hi"}}}},
 			{Notify: &agenttest.CodexAppServerMessage{Method: "thread/tokenUsage/updated", Params: map[string]any{"usage": map[string]any{"total": 10}}}},
 			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"status": "completed"}}},
 		},

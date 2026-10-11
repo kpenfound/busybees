@@ -353,7 +353,7 @@ func fakeCodexAppServer(fail func(error)) {
 				text = runFakeRole(fail).Status
 			}
 			send(map[string]any{"jsonrpc": "2.0", "method": "item/completed",
-				"params": map[string]any{"item": map[string]any{"type": "agent_message", "text": text}}})
+				"params": map[string]any{"item": map[string]any{"type": "agentMessage", "text": text}}})
 			send(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{"turn": map[string]any{"status": "completed"}}})
 		default:
 			if len(msg.ID) > 0 {

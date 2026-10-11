@@ -238,7 +238,7 @@ func readArgs(t *testing.T, dir string) []string {
 // and a claude turn killed before its result event reported none.
 func TestCostCapUnknownCostIsNotTheCap(t *testing.T) {
 	res := capRun(t, AgentCodex, `
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"agent_message","text":"done"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"agentMessage","text":"done"}}}'
 echo '{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"usage":{"inputTokens":900000,"outputTokens":900000}}}'
 echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
 cat >/dev/null

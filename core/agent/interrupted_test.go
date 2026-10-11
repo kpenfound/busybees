@@ -180,12 +180,12 @@ func TestCountTurnsReadsACodexTranscript(t *testing.T) {
 {"jsonrpc":"2.0","id":2,"method":"thread/start","params":{"cwd":"/work"}}
 {"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"t1"}}}
 {"jsonrpc":"2.0","id":3,"method":"turn/start","params":{"threadId":"t1"}}
-{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"command_execution"}}}
+{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"commandExecution"}}}
 {"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"delta":"h"}}
-{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"command_execution"}}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"commandExecution"}}}
 {"jsonrpc":"2.0","id":4,"method":"item/commandExecution/requestApproval","params":{}}
 {"jsonrpc":"2.0","id":4,"result":{"decision":"cancel"}}
-{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"hi"}}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agentMessage","text":"hi"}}}
 {"jsonrpc":"2.0","id":3,"result":{}}
 {"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}
 `

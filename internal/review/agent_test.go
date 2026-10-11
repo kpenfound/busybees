@@ -274,7 +274,7 @@ const claudeAnswer = `echo '{"type":"result","subtype":"success","is_error":fals
 // app-server shape of "the brief", read back the same way the exec-era
 // fake's three item.completed/turn.completed lines were.
 const codexAnswer = `echo '{"method":"item/completed","params":{"item":{"type":"reasoning","text":"thinking"}}}'
-echo '{"method":"item/completed","params":{"item":{"type":"agent_message","text":"the brief"}}}'
+echo '{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"the brief"}}}'
 echo '{"method":"item/completed","params":{"item":{"type":"reasoning","text":"that will do"}}}'
 echo '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'`
 
@@ -563,7 +563,7 @@ func TestAFailedCodexTurnIsAnError(t *testing.T) {
 }
 
 func TestACodexStreamThatNeverEndsTheTurnIsAnError(t *testing.T) {
-	bin, _ := fakeCodex(t, `echo '{"method":"item/completed","params":{"item":{"type":"agent_message","text":"half a brief"}}}'
+	bin, _ := fakeCodex(t, `echo '{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"half a brief"}}}'
 exit 0`)
 	agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
 	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})

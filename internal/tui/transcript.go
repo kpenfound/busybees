@@ -87,7 +87,10 @@ type transcriptEntry struct {
 			Server  string `json:"server"`
 			Tool    string `json:"tool"`
 			Status  string `json:"status"`
-			Output  string `json:"aggregated_output"`
+			Output  string `json:"aggregatedOutput"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		} `json:"item"`
 		// Turn is a "turn/completed" notification's: its Status is
 		// "completed", "failed" (with Error.Message saying why) or
@@ -325,25 +328,31 @@ func stepFinishLines(e transcriptEntry, cost float64) ([]string, float64) {
 // codexItemLines renders one item/completed notification's item the way an
 // assistant message and the tool result under it are rendered: what the
 // session said, the command or MCP tool it called and the first line of the
-// answer. The other item kinds (a file change, a web search, a todo list)
-// are named; reasoning is a marker, as a thought is.
+// answer, or the error a failed MCP tool call reported. The other item
+// kinds (a file change, a web search, a plan) are named; reasoning is a
+// marker, as a thought is, and the task bees sent (userMessage) is
+// dropped.
 func codexItemLines(e transcriptEntry) []string {
 	it := e.Params.Item
 	switch it.Type {
-	case "agent_message":
+	case "agentMessage":
 		return prefixed(sayMark, it.Text, 0)
 	case "reasoning":
 		return []string{thinkMark + "thinking"}
-	case "command_execution":
+	case "commandExecution":
 		out := []string{sayMark + "Bash(" + oneLine(it.Command) + ")"}
 		return append(out, resultMark+toolResult(transcriptBlock{Content: rawString(it.Output), IsError: it.Status == "failed"}))
-	case "mcp_tool_call":
+	case "mcpToolCall":
 		name := it.Tool
 		if it.Server != "" {
 			name = "mcp__" + it.Server + "__" + it.Tool
 		}
-		return []string{sayMark + name + "()"}
-	case "":
+		out := []string{sayMark + name + "()"}
+		if it.Status == "failed" && it.Error != nil {
+			out = append(out, resultMark+toolResult(transcriptBlock{Content: rawString(it.Error.Message), IsError: true}))
+		}
+		return out
+	case "userMessage", "":
 		return nil
 	}
 	return []string{sayMark + it.Type}

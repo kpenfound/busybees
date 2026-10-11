@@ -70,7 +70,7 @@ func restrictedCodexScript(s agenttest.CodexAppServerScript) agenttest.CodexAppS
 	if s.Actions == nil {
 		s.Actions = []agenttest.CodexAppServerAction{
 			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "reasoning", "text": "thinking"}}}},
-			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agent_message", "text": "the brief"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agentMessage", "text": "the brief"}}}},
 			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
 		}
 	}

@@ -232,9 +232,9 @@ func TestCodexRPCConversation(t *testing.T) {
 		f.respond(l.ID, map[string]any{})
 
 		f.notify("thread/tokenUsage/updated", map[string]any{"inputTokens": 10})
-		f.notify("item/completed", map[string]any{"item": map[string]any{"type": "agent_message", "text": "first"}})
-		f.notify("item/completed", map[string]any{"item": map[string]any{"type": "command_execution"}})
-		f.notify("item/completed", map[string]any{"item": map[string]any{"type": "agent_message", "text": "final answer"}})
+		f.notify("item/completed", map[string]any{"item": map[string]any{"type": "agentMessage", "text": "first"}})
+		f.notify("item/completed", map[string]any{"item": map[string]any{"type": "commandExecution"}})
+		f.notify("item/completed", map[string]any{"item": map[string]any{"type": "agentMessage", "text": "final answer"}})
 		f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
 
 		if _, ok := f.recv(); ok {
@@ -952,6 +952,133 @@ func TestCodexRPCAppServerEndsDeterministically(t *testing.T) {
 		<-done
 		if err == nil || err.Error() != want {
 			t.Fatalf("err = %v, want %q", err, want)
+		}
+	})
+}
+
+// codexRecordedTurn are notifications as codex app-server 0.162.1 sent them
+// for a read-only turn whose caller-provided MCP server was not approved:
+// a commentary message, an MCP tool call refused, a final answer.
+var codexRecordedTurn = []string{
+	`{"method":"item/completed","params":{"item":{"type":"userMessage","id":"01a12d4c-5545-7ee1-9dce-28d6b4572410","clientId":null,"content":[{"type":"text","text":"Call read_context, then submit_verdict.","text_elements":[]}]},"threadId":"thread-abc","turnId":"turn-1","completedAtMs":1791761339719},"emittedAtMs":1791761339722}`,
+	`{"method":"item/started","params":{"item":{"type":"agentMessage","id":"msg_1","text":"","phase":"commentary","memoryCitation":null,"delivery":null,"questions":null},"threadId":"thread-abc","turnId":"turn-1","startedAtMs":1791761341118},"emittedAtMs":1791761341118}`,
+	`{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"msg_1","text":"I’ll read the change and submit a verdict with a one-sentence summary.\n","phase":"commentary","memoryCitation":null,"delivery":null,"questions":null},"threadId":"thread-abc","turnId":"turn-1","completedAtMs":1791761341567},"emittedAtMs":1791761341569}`,
+	`{"method":"item/completed","params":{"item":{"type":"mcpToolCall","id":"exec-2df6","server":"review","tool":"read_context","status":"failed","arguments":{},"appContext":null,"mcpAppUi":null,"pluginId":null,"readOnlyHint":null,"result":null,"error":{"message":"MCP tool call requires approval, but approval policy is never"},"durationMs":0},"threadId":"thread-abc","turnId":"turn-1","completedAtMs":1791761344271},"emittedAtMs":1791761344272}`,
+	`{"method":"item/completed","params":{"item":{"type":"reasoning","id":"rs_1","summary":[],"content":[]},"threadId":"thread-abc","turnId":"turn-1","completedAtMs":1791761346349},"emittedAtMs":1791761346350}`,
+	`{"method":"item/completed","params":{"item":{"type":"mcpToolCall","id":"exec-fdaa","server":"review","tool":"read_context","status":"failed","arguments":{},"appContext":null,"mcpAppUi":null,"pluginId":null,"readOnlyHint":null,"result":null,"error":{"message":"MCP tool call requires approval, but approval policy is never"},"durationMs":0},"threadId":"thread-abc","turnId":"turn-1","completedAtMs":1791761347204},"emittedAtMs":1791761347205}`,
+	`{"method":"item/completed","params":{"item":{"type":"mcpToolCall","id":"exec-0c1d","server":"review","tool":"submit_verdict","status":"completed","arguments":{"verdict":"approve"},"result":{"content":[{"type":"text","text":"verdict recorded"}],"structuredContent":null,"_meta":null},"error":null,"durationMs":3},"threadId":"thread-abc","turnId":"turn-1","completedAtMs":1791761347400},"emittedAtMs":1791761347401}`,
+	`{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"msg_2","text":"The review context could not be read: read_context requires approval.","phase":"final_answer","memoryCitation":null,"delivery":null,"questions":null},"threadId":"thread-abc","turnId":"turn-1","completedAtMs":1791761348740},"emittedAtMs":1791761348741}`,
+	`{"method":"turn/completed","params":{"threadId":"thread-abc","turn":{"id":"turn-1","items":[],"itemsView":"summary","status":"completed","error":null,"startedAt":1791761337,"completedAt":1791761348,"durationMs":11292}},"emittedAtMs":1791761348759}`,
+}
+
+// codexStartupFailed is the notification codex sends, once per thread
+// and turn waiting on it, for an MCP server that did not start.
+const codexStartupFailed = `{"method":"mcpServer/startupStatus/updated","params":{"threadId":"thread-abc","name":"review","status":"failed","error":"MCP client for ` + "`review`" + ` failed to start: MCP startup failed: No such file or directory (os error 2)","failureReason":null},"emittedAtMs":1791761411602}`
+
+// raw writes one line exactly as recorded.
+func (f *codexFakeRPC) raw(line string) {
+	_, _ = f.w.Write([]byte(line + "\n"))
+}
+
+// codexHandshake answers initialize, initialized, thread/start and
+// turn/start, sending before turn/start's answer whatever early sends.
+func codexHandshake(f *codexFakeRPC, early ...string) {
+	l, _ := f.recv()
+	f.respond(l.ID, map[string]any{})
+	f.recv()
+	l, _ = f.recv()
+	f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "thread-abc"}})
+	l, _ = f.recv()
+	for _, line := range early {
+		f.raw(line)
+	}
+	f.respond(l.ID, map[string]any{"turn": map[string]any{"id": "turn-1"}})
+}
+
+// TestCodexRPCFinalAnswerFromRecordedTurn reads a turn as codex app-server
+// sends it: the result is the agentMessage codex marked final_answer, not
+// the commentary before it, every completed item counts as a turn, and
+// each failed MCP tool call is a diagnostic, a repeated one recorded once.
+func TestCodexRPCFinalAnswerFromRecordedTurn(t *testing.T) {
+	out, err, _ := runCodexFakeConversation(t, codexRPCTurn{Cwd: "/w", Prompt: "review", Tools: []string{}}, func(f *codexFakeRPC) {
+		codexHandshake(f)
+		for _, line := range codexRecordedTurn {
+			f.raw(line)
+		}
+		f.recv()
+	})
+	if err != nil {
+		t.Fatalf("codexRPCRun: %v", err)
+	}
+	if want := "The review context could not be read: read_context requires approval."; out.Result != want {
+		t.Errorf("Result = %q, want %q", out.Result, want)
+	}
+	if out.Subtype != "success" || out.SessionID != "thread-abc" {
+		t.Errorf("Subtype, SessionID = %q, %q", out.Subtype, out.SessionID)
+	}
+	if out.NumTurns != 7 {
+		t.Errorf("NumTurns = %d, want 7", out.NumTurns)
+	}
+	want := []string{"MCP tool review/read_context failed: MCP tool call requires approval, but approval policy is never"}
+	if !reflect.DeepEqual(out.Diagnostics, want) {
+		t.Errorf("Diagnostics = %q, want %q", out.Diagnostics, want)
+	}
+}
+
+// TestCodexRPCLastMessageWithoutPhase keeps the last agent message as the
+// result when codex marks none of them final_answer: the phase is optional
+// and some models never send it.
+func TestCodexRPCLastMessageWithoutPhase(t *testing.T) {
+	out, err, _ := runCodexFakeConversation(t, codexRPCTurn{Cwd: "/w", Prompt: "p"}, func(f *codexFakeRPC) {
+		codexHandshake(f)
+		f.raw(`{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m1","text":"looking","phase":"commentary"}}}`)
+		f.raw(`{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m2","text":"the answer","phase":null}}}`)
+		f.raw(`{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m3","text":""}}}`)
+		f.raw(`{"method":"turn/completed","params":{"turn":{"status":"completed"}}}`)
+		f.recv()
+	})
+	if err != nil {
+		t.Fatalf("codexRPCRun: %v", err)
+	}
+	if out.Result != "the answer" {
+		t.Errorf("Result = %q, want %q", out.Result, "the answer")
+	}
+}
+
+// TestCodexRPCMCPStartupFailure keeps an MCP server that failed to start
+// as one diagnostic however often codex repeats it, whether it arrives
+// before turn/start's answer or during the turn, and keeps it when the
+// turn then fails.
+func TestCodexRPCMCPStartupFailure(t *testing.T) {
+	want := []string{"MCP server \"review\" failed to start: MCP client for `review` failed to start: MCP startup failed: No such file or directory (os error 2)"}
+
+	t.Run("turn completes", func(t *testing.T) {
+		out, err, _ := runCodexFakeConversation(t, codexRPCTurn{Cwd: "/w", Prompt: "p"}, func(f *codexFakeRPC) {
+			codexHandshake(f, codexStartupFailed)
+			f.raw(codexStartupFailed)
+			f.raw(`{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m1","text":"no tools","phase":"final_answer"}}}`)
+			f.raw(`{"method":"turn/completed","params":{"turn":{"status":"completed"}}}`)
+			f.recv()
+		})
+		if err != nil {
+			t.Fatalf("codexRPCRun: %v", err)
+		}
+		if !reflect.DeepEqual(out.Diagnostics, want) {
+			t.Errorf("Diagnostics = %q, want %q", out.Diagnostics, want)
+		}
+	})
+
+	t.Run("turn fails", func(t *testing.T) {
+		out, err, _ := runCodexFakeConversation(t, codexRPCTurn{Cwd: "/w", Prompt: "p"}, func(f *codexFakeRPC) {
+			codexHandshake(f, codexStartupFailed)
+			f.raw(`{"method":"turn/completed","params":{"turn":{"status":"failed","error":{"message":"boom"}}}}`)
+			f.recv()
+		})
+		if err == nil {
+			t.Fatal("codexRPCRun succeeded, want the failed turn's error")
+		}
+		if out == nil || !reflect.DeepEqual(out.Diagnostics, want) {
+			t.Errorf("outcome = %+v, want Diagnostics %q", out, want)
 		}
 	})
 }

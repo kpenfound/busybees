@@ -211,9 +211,9 @@ func TestFakeCodexAppServerSpeaksTheConversation(t *testing.T) {
 		if msg.Method == "item/completed" {
 			item, _ := msg.Params["item"].(map[string]any)
 			switch item["type"] {
-			case "mcp_tool_call":
+			case "mcpToolCall":
 				sawToolCall = true
-			case "agent_message":
+			case "agentMessage":
 				sawAgentMessage = true
 			}
 			continue

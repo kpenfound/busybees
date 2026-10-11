@@ -371,3 +371,51 @@ func TestCodexWritableTurnRefusesWhatItCannotHold(t *testing.T) {
 		}
 	}
 }
+
+// TestCodexReadOnlyHeldTurnApprovesGrantedMCP is the reviewer's
+// configuration: a held turn granted no built-in tool, so read-only, and
+// its own MCP server. The command line approves that server's tools —
+// codex fails every unapproved call in a read-only sandbox, since approval
+// policy "never" leaves no one to ask — and the session's result is the
+// final answer, with a failed tool call kept as a diagnostic in result.json.
+func TestCodexReadOnlyHeldTurnApprovesGrantedMCP(t *testing.T) {
+	config, origins := codexConfigAnswer([]string{})
+	item := func(item map[string]any) agenttest.CodexAppServerAction {
+		return agenttest.CodexAppServerAction{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": item}}}
+	}
+	bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+		ConfigResult: map[string]any{"config": config, "origins": origins},
+		ThreadID:     "thread-r",
+		Actions: append([]agenttest.CodexAppServerAction{
+			item(map[string]any{"type": "agentMessage", "id": "m1", "text": "Reading the context.", "phase": "commentary"}),
+			item(map[string]any{"type": "mcpToolCall", "id": "c1", "server": "tools", "tool": "read_context", "status": "completed",
+				"result": map[string]any{"content": []any{map[string]any{"type": "text", "text": "the context"}}}}),
+			item(map[string]any{"type": "mcpToolCall", "id": "c2", "server": "tools", "tool": "submit_verdict", "status": "failed",
+				"error": map[string]any{"message": "verdict rejected"}}),
+			item(map[string]any{"type": "agentMessage", "id": "m2", "text": "Verdict: approve.", "phase": "final_answer"}),
+		}, codexCompletedActions()...),
+	})
+	r := &Runner{CodexBin: bin, SessionsDir: t.TempDir()}
+	res, err := r.Run(context.Background(), codexHeldRequest(t))
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	if start := codexRecordedThreadStart(t, rec); start.Sandbox != "read-only" {
+		t.Errorf("sandbox = %q, want read-only", start.Sandbox)
+	}
+	if len(rec.Argv) != 1 || !slices.Contains(rec.Argv[0], `mcp_servers.tools.default_tools_approval_mode="approve"`) {
+		t.Errorf("argv does not approve the granted server's tools: %q", rec.Argv)
+	}
+	if res.ResultText != "Verdict: approve." {
+		t.Errorf("ResultText = %q, want the final answer", res.ResultText)
+	}
+	want := []string{"MCP tool tools/submit_verdict failed: verdict rejected"}
+	if !slices.Equal(res.Diagnostics, want) {
+		t.Errorf("Diagnostics = %q, want %q", res.Diagnostics, want)
+	}
+	data, err := os.ReadFile(res.SessionDir + "/" + ResultFile)
+	if err != nil || !strings.Contains(string(data), "verdict rejected") {
+		t.Errorf("result.json does not carry the diagnostic: %s, %v", data, err)
+	}
+}

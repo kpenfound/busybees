@@ -325,7 +325,7 @@ func fakeCodexReviewAppServer() {
 				notify("error", map[string]any{"message": "the model is overloaded"})
 				return
 			}
-			notify("item/completed", map[string]any{"item": map[string]any{"type": "agent_message", "text": answer}})
+			notify("item/completed", map[string]any{"item": map[string]any{"type": "agentMessage", "text": answer}})
 			notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
 		default:
 			// Every other request bees might send gets a generic result
@@ -927,8 +927,8 @@ func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail f
 			if err := session.WriteOutcome(sessionDir, outcome); err != nil {
 				fail(err)
 			}
-			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_0", "type": "mcp_tool_call", "server": "bees", "tool": "done", "status": "completed"}})
-			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_1", "type": "agent_message", "text": text}})
+			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_0", "type": "mcpToolCall", "server": "bees", "tool": "done", "status": "completed"}})
+			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_1", "type": "agentMessage", "text": text}})
 			notify("turn/completed", map[string]any{"turn": map[string]any{"id": "fake-turn", "status": "completed"}, "usage": map[string]any{"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}})
 		default:
 			// Every other request bees might send (turn/interrupt, a

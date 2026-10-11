@@ -212,14 +212,16 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"thread/start","params":{"cwd":"/work","approvalPolicy":"never","sandbox":"danger-full-access"}}`,
 		`{"jsonrpc":"2.0","id":3,"result":{"thread":{"id":"0199-abc"}}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"turn/start","params":{"threadId":"0199-abc","input":[{"type":"text","text":"Build it"}]}}`,
-		`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"id":"item_0","type":"command_execution","command":"git status","status":"in_progress"}}}`,
+		`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"id":"item_0","type":"commandExecution","command":"git status","status":"inProgress"}}}`,
 		`{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"itemId":"item_2","delta":"I'll"}}`,
-		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"command_execution","command":"git status","aggregated_output":"On branch main\nnothing to commit\n","exit_code":0,"status":"completed"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"commandExecution","command":"git status","aggregatedOutput":"On branch main\nnothing to commit\n","exitCode":0,"status":"completed"}}}`,
 		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_1","type":"reasoning","text":"I should look at the diff"}}}`,
-		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_2","type":"agent_message","text":"I'll start by reading the diff"}}}`,
-		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_3","type":"mcp_tool_call","server":"bees","tool":"issue_view","status":"completed"}}}`,
-		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_4","type":"command_execution","command":"go test ./...","aggregated_output":"FAIL\n","exit_code":1,"status":"failed"}}}`,
-		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_5","type":"file_change","changes":[{"path":"a.go","kind":"update"}],"status":"completed"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_2","type":"agentMessage","text":"I'll start by reading the diff"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"userMessage","id":"u_1","content":[{"type":"text","text":"Build it"}]}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_3","type":"mcpToolCall","server":"bees","tool":"issue_view","status":"completed"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_3b","type":"mcpToolCall","server":"review","tool":"submit_verdict","status":"failed","error":{"message":"MCP tool call requires approval, but approval policy is never"}}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_4","type":"commandExecution","command":"go test ./...","aggregatedOutput":"FAIL\n","exitCode":1,"status":"failed"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_5","type":"fileChange","changes":[{"path":"a.go","kind":"update"}],"status":"completed"}}}`,
 		`{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimitReachedType":null}}`,
 		`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"usage":{"input_tokens":1200,"output_tokens":300}}}`,
 		`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}`,
@@ -241,7 +243,9 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 		"● I'll start by reading the diff",
 		"● mcp__bees__issue_view()",
 		"  ⎿ error: FAIL",
-		"● file_change",
+		"● mcp__review__submit_verdict()",
+		"  ⎿ error: MCP tool call requires approval, but approval policy is never",
+		"● fileChange",
 		"● session ended: ok",
 	} {
 		if !strings.Contains(got, want) {
@@ -250,7 +254,7 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 	}
 	for _, unwanted := range []string{
 		// bookkeeping the server sends
-		"0199-abc", "in_progress", "I should look at the diff", "input_tokens", "rateLimitReachedType", "$",
+		"0199-abc", "inProgress", "userMessage", "Build it", "I should look at the diff", "input_tokens", "rateLimitReachedType", "$",
 		// the delta notification
 		"delta",
 		// bees' own requests and responses

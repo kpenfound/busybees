@@ -405,9 +405,9 @@ func TestCodexRunSuccess(t *testing.T) {
 	bin := fakeCodexAppServer(t, "thread-7", "turn-1", `
 printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
 env > "$TASK_SESSION_DIR/env.txt"
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"a b","exit_code":0,"status":"completed"}}}'
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_1","type":"mcp_tool_call","server":"task","tool":"done","status":"completed"}}}'
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_2","type":"agent_message","text":"all done"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"commandExecution","command":"ls","aggregatedOutput":"a b","exitCode":0,"status":"completed"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_1","type":"mcpToolCall","server":"task","tool":"done","status":"completed"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_2","type":"agentMessage","text":"all done"}}}'
 echo '{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"usage":{"inputTokens":120,"outputTokens":30}}}'
 echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
 printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}},"note":"hi"}' > "$TASK_SESSION_DIR/outcome.json"
@@ -443,6 +443,7 @@ cat >/dev/null
 	}
 	for _, want := range []string{
 		`model_reasoning_effort="high"`,
+		`mcp_servers.tools.default_tools_approval_mode="approve"`,
 		`mcp_servers.tools.command="/usr/local/bin/task"`,
 		`mcp_servers.tools.args=["mcp","serve"]`,
 		`mcp_servers.tools.env.TASK_ROLE="builder"`,
@@ -552,7 +553,7 @@ func TestCodexFailedTurn(t *testing.T) {
 		{
 			name: "failed turn",
 			script: fakeCodexAppServer(t, "t", "turn-1", `
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"trying"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agentMessage","text":"trying"}}}'
 echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"failed"}}}'
 cat >/dev/null
 `),
@@ -594,8 +595,8 @@ cat >/dev/null
 // how it went: an error, the same as a failed turn.
 func TestCodexStreamWithoutATurnEnd(t *testing.T) {
 	bin := fakeCodexAppServer(t, "t", "turn-1", `
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"command_execution","command":"go test ./..."}}}'
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"half way"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"commandExecution","command":"go test ./..."}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agentMessage","text":"half way"}}}'
 `)
 	r := newRunner(t, "")
 	r.CodexBin = bin
@@ -833,8 +834,10 @@ func TestCodexMCPOverrides(t *testing.T) {
 		"empty": {},
 	})
 	want := []string{
+		`mcp_servers.alpha.default_tools_approval_mode="approve"`,
 		`mcp_servers.alpha.url="https://x.example/mcp"`,
 		`mcp_servers.alpha.http_headers.Authorization="Bearer t"`,
+		`mcp_servers.zeta.default_tools_approval_mode="approve"`,
 		`mcp_servers.zeta.command="/bin/z"`,
 		`mcp_servers.zeta.args=["a b","q\"uote"]`,
 		`mcp_servers.zeta.env_vars=["API_TOKEN"]`,
@@ -1119,7 +1122,7 @@ func TestCodexSessionCompletesThroughTheSharedFakeNewThread(t *testing.T) {
 		ThreadID: "thread-e2e-new",
 		TurnID:   "turn-1",
 		Actions: []agenttest.CodexAppServerAction{
-			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agent_message", "text": "the new-thread brief"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agentMessage", "text": "the new-thread brief"}}}},
 			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
 		},
 	})
@@ -1151,7 +1154,7 @@ func TestCodexSessionCompletesThroughTheSharedFakeResumedThread(t *testing.T) {
 		ResumeID: "thread-e2e-resumed",
 		TurnID:   "turn-1",
 		Actions: []agenttest.CodexAppServerAction{
-			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agent_message", "text": "the resumed-thread brief"}}}},
+			{Notify: &agenttest.CodexAppServerMessage{Method: "item/completed", Params: map[string]any{"item": map[string]any{"type": "agentMessage", "text": "the resumed-thread brief"}}}},
 			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
 		},
 	})

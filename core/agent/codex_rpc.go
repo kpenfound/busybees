@@ -43,7 +43,8 @@ type codexRPCTurn struct {
 }
 
 // codexRPCOutcome is what one codex app-server conversation produced, in
-// streamEnd's terms, plus config/read's answer, unexamined, when
+// streamEnd's terms (Diagnostics included, and alone when the conversation
+// ended in an error), plus config/read's answer, unexamined, when
 // codexRPCTurn.ConfigDir asked for one, and the account's rate-limit
 // snapshot from the conversation's last account/rateLimits/updated
 // notification, nil when none arrived.
@@ -209,7 +210,7 @@ func codexAppServerEnded(method string) error {
 // codexConversation drives one codex app-server process over its stdin and
 // stdout: line framing, request ids, answering the server's own requests
 // and folding its notifications into a running turn count, last agent
-// message and turn status.
+// message, turn status and the MCP failures it reported.
 type codexConversation struct {
 	stdin      io.Writer
 	scanner    *bufio.Scanner
@@ -219,9 +220,13 @@ type codexConversation struct {
 	threadID string
 	// turnID is turn/start's answer: the id turn/interrupt names alongside
 	// threadID, learned before awaitTurnCompleted is ever called.
-	turnID      string
-	turns       int
+	turnID string
+	turns  int
+	// lastMessage is the last non-empty agentMessage item's text, and
+	// finalAnswer the last one codex marked phase "final_answer": the
+	// result is finalAnswer when there is one, lastMessage otherwise.
 	lastMessage string
+	finalAnswer string
 	// status is turn/completed's status once the turn has ended: empty
 	// until then.
 	status string
@@ -229,6 +234,9 @@ type codexConversation struct {
 	// account/rateLimits/updated notification seen so far, nil until one
 	// arrives.
 	rateLimit *RateLimit
+	// diagnostics are the MCP server startup failures and failed MCP tool
+	// calls the server reported, in the order they arrived, each once.
+	diagnostics []string
 }
 
 func newCodexConversation(stdin io.Writer, stdout io.Reader, transcript io.Writer) *codexConversation {
@@ -318,6 +326,8 @@ func (c *codexConversation) await(id int, method string) (json.RawMessage, error
 			return nil, codexServerError(l.Params)
 		case l.Method == codexRateLimitMethod:
 			c.recordRateLimit(l.Params)
+		case l.Method == codexMCPStartupMethod:
+			c.recordMCPStartup(l.Params)
 		case l.Method != "":
 			// A notification this phase does not otherwise act on
 			// (thread/tokenUsage/updated, …): already recorded in the
@@ -404,6 +414,8 @@ func (c *codexConversation) awaitTurnCompleted(stop <-chan struct{}) error {
 				return c.recordTurnCompleted(l.Params)
 			case codexRateLimitMethod:
 				c.recordRateLimit(l.Params)
+			case codexMCPStartupMethod:
+				c.recordMCPStartup(l.Params)
 			case "error":
 				return codexServerError(l.Params)
 			}
@@ -431,19 +443,84 @@ func (c *codexConversation) sendInterrupt() error {
 	})
 }
 
-// recordItem counts one item/completed notification as a turn, and keeps
-// its text as the result when it is a non-empty agent message.
+// codexMCPStartupMethod reports one MCP server's startup: "starting",
+// then "ready" or "failed" with the error that stopped it.
+const codexMCPStartupMethod = "mcpServer/startupStatus/updated"
+
+// recordMCPStartup keeps a failed MCP server startup as a diagnostic.
+func (c *codexConversation) recordMCPStartup(params json.RawMessage) {
+	var p struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	if json.Unmarshal(params, &p) != nil || p.Status != "failed" {
+		return
+	}
+	msg := fmt.Sprintf("MCP server %q failed to start", p.Name)
+	if p.Error != "" {
+		msg += ": " + p.Error
+	}
+	c.diagnose(msg)
+}
+
+// diagnose records msg once: codex repeats a startup failure for every
+// thread and turn that waits on the server.
+func (c *codexConversation) diagnose(msg string) {
+	if !slices.Contains(c.diagnostics, msg) {
+		c.diagnostics = append(c.diagnostics, msg)
+	}
+}
+
+// recordItem counts one item/completed notification as a turn. A
+// non-empty agentMessage's text is kept as the result, a "final_answer"
+// one ahead of any other; a failed mcpToolCall is kept as a diagnostic.
 func (c *codexConversation) recordItem(params json.RawMessage) {
 	c.turns++
 	var p struct {
 		Item struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type   string `json:"type"`
+			Text   string `json:"text"`
+			Phase  string `json:"phase"`
+			Server string `json:"server"`
+			Tool   string `json:"tool"`
+			Status string `json:"status"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		} `json:"item"`
 	}
-	if json.Unmarshal(params, &p) == nil && p.Item.Type == "agent_message" && p.Item.Text != "" {
-		c.lastMessage = p.Item.Text
+	if json.Unmarshal(params, &p) != nil {
+		return
 	}
+	switch it := p.Item; it.Type {
+	case "agentMessage":
+		if it.Text == "" {
+			return
+		}
+		c.lastMessage = it.Text
+		if it.Phase == "final_answer" {
+			c.finalAnswer = it.Text
+		}
+	case "mcpToolCall":
+		if it.Status != "failed" {
+			return
+		}
+		msg := fmt.Sprintf("MCP tool %s/%s failed", it.Server, it.Tool)
+		if it.Error != nil && it.Error.Message != "" {
+			msg += ": " + it.Error.Message
+		}
+		c.diagnose(msg)
+	}
+}
+
+// result is the turn's answer: its final answer when codex marked one,
+// otherwise its last agent message.
+func (c *codexConversation) result() string {
+	if c.finalAnswer != "" {
+		return c.finalAnswer
+	}
+	return c.lastMessage
 }
 
 // recordTurnCompleted reads turn/completed's status: "completed" ends the
@@ -476,11 +553,21 @@ func (c *codexConversation) recordTurnCompleted(params json.RawMessage) error {
 // writes and every request and response the driver sends goes to
 // transcript. The outcome's RateLimit is the account/rateLimits/updated
 // notification last seen, nil when none arrived. stop is the runner's own
-// interrupt signal; see awaitTurnCompleted.
+// interrupt signal; see awaitTurnCompleted. A conversation that ends in
+// an error returns it with an outcome carrying only the diagnostics
+// gathered until then.
 func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, turn codexRPCTurn, stop <-chan struct{}) (*codexRPCOutcome, error) {
 	defer func() { _ = stdin.Close() }()
 	c := newCodexConversation(stdin, stdout, transcript)
+	outcome, err := c.run(turn, stop)
+	if err != nil {
+		return &codexRPCOutcome{streamEnd: streamEnd{Diagnostics: c.diagnostics}}, err
+	}
+	return outcome, nil
+}
 
+// run is codexRPCRun's conversation, from initialize to turn/completed.
+func (c *codexConversation) run(turn codexRPCTurn, stop <-chan struct{}) (*codexRPCOutcome, error) {
 	if _, err := c.call("initialize", codexRPCClientInfo); err != nil {
 		return nil, err
 	}
@@ -550,9 +637,10 @@ func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, t
 		subtype = "success"
 	}
 	return &codexRPCOutcome{streamEnd: streamEnd{
-		SessionID: c.threadID,
-		Result:    c.lastMessage,
-		Subtype:   subtype,
-		NumTurns:  c.turns,
+		SessionID:   c.threadID,
+		Result:      c.result(),
+		Subtype:     subtype,
+		NumTurns:    c.turns,
+		Diagnostics: c.diagnostics,
 	}, Config: config, RateLimit: c.rateLimit}, nil
 }

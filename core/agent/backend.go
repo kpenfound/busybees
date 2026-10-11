@@ -122,6 +122,10 @@ type streamEnd struct {
 	// the failure the way the error subtypes do.
 	Subtype  string
 	NumTurns int
+	// Diagnostics are failures the agent reported that its result text
+	// may not mention: an MCP server that did not start, an MCP tool call
+	// that failed.
+	Diagnostics []string
 }
 
 // claudeBackend runs a session as `claude -p`.
@@ -311,8 +315,9 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 // Command line (codexAppServerCommand): `codex app-server` with these -c
 // overrides — the procs.CodexMarker session-directory override, so
 // hasMarker finds the process by its marker; the session's MCP server
-// overrides (codexMCPOverrides), the caller-owned server included; for a
-// held turn, the held settings (codexHeldArgs); for a restricted turn,
+// overrides (codexMCPOverrides), the caller-owned server included, each
+// with its tools approved; for a held turn, the held settings
+// (codexHeldArgs); for a restricted turn,
 // codexRestrictedConfigArgs and the mcp_servers={...} override that
 // disables every inherited server but the read server, built from
 // codexMCPInventory exactly as it ran before this backend changed; and
@@ -349,9 +354,11 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 // with action "cancel", and every other request, known or unknown, a
 // JSON-RPC error saying it is not supported in a bees session.
 //
-// codexRPCRun reports the thread id, the last agent message and the turn
-// count from the notifications it reads — item/completed and
-// turn/completed; an error it returns — an "error" notification, a failed
+// codexRPCRun reports the thread id, the agentMessage codex marked
+// final_answer (the last agent message when none is), the turn count and,
+// as diagnostics, every failed MCP server startup and MCP tool call from
+// the notifications it reads — item/completed,
+// mcpServer/startupStatus/updated and turn/completed; an error it returns — an "error" notification, a failed
 // turn, or an error response to thread/start, thread/resume or turn/start
 // — becomes the session's result text, with no other subtype than
 // "error": codex reports tokens (thread/tokenUsage/updated), not a cost,
@@ -454,8 +461,8 @@ func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, std
 		// as a plain error, with no thread id or partial progress to
 		// report alongside it: its message becomes the session's result
 		// text, the way a claude or opencode session with no closing
-		// event's stderr does.
-		return &streamEnd{Subtype: "error", Result: err.Error()}, nil, nil
+		// event's stderr does, with the MCP failures seen before it.
+		return &streamEnd{Subtype: "error", Result: err.Error(), Diagnostics: outcome.Diagnostics}, nil, nil
 	}
 	return &outcome.streamEnd, outcome.RateLimit, nil
 }
@@ -490,11 +497,20 @@ func codexList(l []string) string {
 // mcp_servers table, one per key, in a stable order: stdio servers by
 // command, args, env and env_vars; remote ones by url and http_headers. Names are
 // sorted so two sessions of one role build the same command line.
+//
+// Every entry's tools are approved (default_tools_approval_mode): the
+// session was granted the server, and approvalPolicy "never" leaves no one
+// to ask. Without it codex fails, in a read-only sandbox, every call to a
+// tool that does not declare readOnlyHint with "MCP tool call requires
+// approval, but approval policy is never".
 func codexMCPOverrides(entries map[string]MCPEntry) []string {
 	var out []string
 	for _, name := range sortedKeys(entries) {
 		e := entries[name]
 		prefix := "mcp_servers." + name + "."
+		if e.Command != "" || e.URL != "" {
+			out = append(out, prefix+"default_tools_approval_mode="+codexValue("approve"))
+		}
 		if e.Command != "" {
 			out = append(out, prefix+"command="+codexValue(e.Command))
 			if len(e.Args) > 0 {

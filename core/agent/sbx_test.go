@@ -851,7 +851,7 @@ func TestSandboxSessionRunsEveryAgent(t *testing.T) {
 			// this process was started with, the args file capturing argv
 			// as every other agent's does.
 			return fakeCodexAppServer(t, "t1", "turn-1", `printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
-echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"boxed"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agentMessage","text":"boxed"}}}'
 echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
 cat >/dev/null
 `)

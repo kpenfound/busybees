@@ -132,6 +132,11 @@ type Result struct {
 	// RateLimit is the last rate-limit event of the session's stream, or
 	// nil when it carried none.
 	RateLimit *RateLimit `json:"rate_limit,omitempty"`
+	// Diagnostics are failures the agent reported that ResultText may not
+	// mention, one line each: an MCP server that did not start, or an MCP
+	// tool call that failed. Codex reports them; other backends leave it
+	// empty.
+	Diagnostics []string `json:"diagnostics,omitempty"`
 }
 
 // RateLimit is what claude last said about the account's capacity: the
@@ -528,6 +533,10 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 		res.ResultText = final.Result
 		res.IsError = final.IsError
 		res.NumTurns = final.NumTurns
+		res.Diagnostics = final.Diagnostics
+		for _, d := range final.Diagnostics {
+			r.Logger.Warn("session diagnostic", "session", req.Name, "diagnostic", d)
+		}
 		if final.Subtype != "success" {
 			res.ErrorSubtype = final.Subtype
 			res.IsError = true
