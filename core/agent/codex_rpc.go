@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"time"
+	"unicode/utf8"
 )
 
 // codexRPCClientInfo is the client half of codex app-server's initialize
@@ -474,7 +475,9 @@ func (c *codexConversation) diagnose(msg string) {
 
 // recordItem counts one item/completed notification as a turn. A
 // non-empty agentMessage's text is kept as the result, a "final_answer"
-// one ahead of any other; a failed mcpToolCall is kept as a diagnostic.
+// one ahead of any other; a failed mcpToolCall is kept as a diagnostic,
+// using error.message or, when empty, the first non-empty result.content
+// text block, bounded to 300 bytes plus a truncation marker.
 func (c *codexConversation) recordItem(params json.RawMessage) {
 	c.turns++
 	var p struct {
@@ -488,6 +491,7 @@ func (c *codexConversation) recordItem(params json.RawMessage) {
 			Error  *struct {
 				Message string `json:"message"`
 			} `json:"error"`
+			Result json.RawMessage `json:"result"`
 		} `json:"item"`
 	}
 	if json.Unmarshal(params, &p) != nil {
@@ -509,9 +513,41 @@ func (c *codexConversation) recordItem(params json.RawMessage) {
 		msg := fmt.Sprintf("MCP tool %s/%s failed", it.Server, it.Tool)
 		if it.Error != nil && it.Error.Message != "" {
 			msg += ": " + it.Error.Message
+		} else if text := codexToolFailureText(it.Result); text != "" {
+			msg += ": " + text
 		}
 		c.diagnose(msg)
 	}
+}
+
+// codexToolFailureText reads only the first non-empty text block from a
+// tool result, keeping at most 300 bytes at a UTF-8 boundary and appending
+// an ellipsis when truncated. Other result shapes have no fallback text.
+func codexToolFailureText(result json.RawMessage) string {
+	var r struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(result, &r) != nil {
+		return ""
+	}
+	for _, block := range r.Content {
+		if block.Type != "text" || block.Text == "" {
+			continue
+		}
+		const limit = 300
+		if len(block.Text) <= limit {
+			return block.Text
+		}
+		end := limit
+		for !utf8.RuneStart(block.Text[end]) {
+			end--
+		}
+		return block.Text[:end] + "…"
+	}
+	return ""
 }
 
 // result is the turn's answer: its final answer when codex marked one,
