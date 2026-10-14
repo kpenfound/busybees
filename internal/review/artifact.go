@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	core "github.com/kpenfound/busybees/core/review"
+	core "github.com/kpenfound/agentcore/review"
 )
 
 // The review artifact. Every review is a directory that holds what the

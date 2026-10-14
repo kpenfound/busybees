@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	core "github.com/kpenfound/busybees/core/review"
+	core "github.com/kpenfound/agentcore/review"
 	"github.com/kpenfound/busybees/internal/github"
 )
 

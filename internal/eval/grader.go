@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kpenfound/busybees/core/agent"
+	"github.com/kpenfound/agentcore/agent"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/review"

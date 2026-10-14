@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/agentcore/work"
 )
 
 // sendFixture sends the two messages the rest of this file's scenarios

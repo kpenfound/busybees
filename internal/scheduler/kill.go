@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/kpenfound/busybees/core/agent/procs"
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/agentcore/agent/procs"
+	"github.com/kpenfound/agentcore/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/session"
 )

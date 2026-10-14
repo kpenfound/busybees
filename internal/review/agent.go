@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kpenfound/busybees/core/agent"
-	core "github.com/kpenfound/busybees/core/review"
-	"github.com/kpenfound/busybees/core/vcs"
+	"github.com/kpenfound/agentcore/agent"
+	core "github.com/kpenfound/agentcore/review"
+	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -116,9 +116,10 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 // run as another agent, whose executable only it names. Its own record of
 // the session — the transcript, the prompt and the result — goes under the
 // machine's temporary directory; a review session is not a factory session,
-// and its runner logs nothing.
+// and its runner logs nothing. Its EnvironmentPrefix is the factory's, so the
+// session inherits no BEES_* variable.
 func (a *CLIAgent) runner() *agent.Runner {
-	r := &agent.Runner{Logger: slog.New(slog.DiscardHandler)}
+	r := &agent.Runner{Logger: slog.New(slog.DiscardHandler), EnvironmentPrefix: "BEES_"}
 	for at := a; at != nil; at = at.Fallback {
 		if r.ClaudeBin == "" {
 			r.ClaudeBin = at.ClaudeBin

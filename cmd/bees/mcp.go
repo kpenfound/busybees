@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
-	"github.com/kpenfound/busybees/core/mcphost"
+	"github.com/kpenfound/agentcore/mcphost"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/duplicates"
 	"github.com/kpenfound/busybees/internal/github"

@@ -3,9 +3,9 @@ package mcpserver
 import (
 	"context"
 
-	"github.com/kpenfound/busybees/core/agent"
-	"github.com/kpenfound/busybees/core/mcphost"
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/agentcore/agent"
+	"github.com/kpenfound/agentcore/mcphost"
+	"github.com/kpenfound/agentcore/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"

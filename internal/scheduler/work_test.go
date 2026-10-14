@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/agentcore/work"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"

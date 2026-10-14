@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	core "github.com/kpenfound/busybees/core/review"
+	core "github.com/kpenfound/agentcore/review"
 )
 
 // The busybees angle adapter supplies configured read-only CLI agents and

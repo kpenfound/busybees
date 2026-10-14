@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kpenfound/busybees/core/ops"
+	"github.com/kpenfound/agentcore/ops"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"

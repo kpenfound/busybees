@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/kpenfound/busybees/core/review"
+	core "github.com/kpenfound/agentcore/review"
 )
 
 // noisy is a finding as the judge left it: anchored, with an id, a category

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kpenfound/busybees/core/agent"
+	"github.com/kpenfound/agentcore/agent"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghapp/ghapptest"
 	"github.com/kpenfound/busybees/internal/github"

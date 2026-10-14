@@ -1,7 +1,7 @@
 package scheduler
 
 import (
-	"github.com/kpenfound/busybees/core/ops"
+	"github.com/kpenfound/agentcore/ops"
 )
 
 // Event kinds published on the scheduler's event stream.

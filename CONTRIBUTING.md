@@ -3,15 +3,6 @@
 ## Package layout
 
 ```
-core/agent/         standalone session runner, backends, sandbox and result artifacts
-core/agent/agentbin/ fake-executable guard
-core/agent/agenttest/ shared fake agents, Docker, sbx and host MCP server
-core/agent/agenttest/enforcertest/ an agent.Enforcer that starts no process
-core/agent/procs/    finding and stopping sessions (processes and containers)
-core/ops/            retry, ledger/budgets, pause/degraded signals, events, slots and wakes
-core/mcphost/        MCP host, typed role-scoped registration, lifecycle and outcome tool
-core/review/         brief, concurrent angles, judge, findings, filtering and artifacts over supplied context and diff
-core/vcs/           workspace contract and provider lifecycle, replaying revisions, signing commits; no git discovery
 cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml and the machine config: schema, defaults, validation, global/role merging, labels, the init template
 internal/daemon/     several projects' schedulers in one process, one goroutine each, a failure kept to its project
@@ -23,15 +14,15 @@ internal/github/     thin wrapper around the gh CLI: issues, PRs, labels, milest
 internal/issues/     `bees issue create/link`: filter labels, kind and state labels, sub-issue of --parent, inherited milestone
 internal/logging/    console and file logging; bees.log rotation
 internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<role>/
-internal/mcpserver/  busybees MCP tool registration, collaborators and authorization on core/mcphost
+internal/mcpserver/  busybees MCP tool registration, collaborators and authorization on agentcore/mcphost
 internal/nams/       the Neo4j Agent Memory REST client behind notes_read and notes_write with notes.backend = "neo4j"
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
-internal/review/     GitHub context/diff acquisition, configured CLI agents, reviewer notes storage, triage, publication and the adapter around core/review
+internal/review/     GitHub context/diff acquisition, configured CLI agents, reviewer notes storage, triage, publication and the adapter around agentcore/review
 internal/reviewtui/  the triage screen: the diff beside the finding, the console's keys each acting on one press, driving the same triage queue
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
 internal/session/    busybees profile, environment, identity and outcome adapter
 internal/skills/     skill repositories by git URL, exposed as claude plugin directories
-internal/state/      busybees bookkeeping/status, notes and schema migration around the core ledger
+internal/state/      busybees bookkeeping/status, notes and schema migration around the agentcore ledger
 internal/testutil/   test helpers: a local bare git remote and a clone
 internal/text/       small English renderings shared by every package
 internal/tui/        the live view `bees run` draws in a terminal
@@ -39,9 +30,14 @@ internal/versions/   version checks for the tools bees drives (gh, claude)
 internal/workspace/  temporary git worktrees created from the main clone
 ```
 
+The session runner, MCP host, review pipeline, workspace contract and
+operational primitives are a separate module,
+[agentcore](https://github.com/kpenfound/agentcore). Its README documents the
+contracts busybees builds on.
+
 Dependency direction is strictly downwards: `cmd/bees` → `tui` → `scheduler`
 → everything else, and `scheduler` is the only package that knows about all
-the others. `github` and `core/agent` execute external programs (`gh`, `claude`)
+the others. `github` and agentcore's `agent` execute external programs (`gh`, `claude`)
 and both expose an override point (`Client.Exec`, `Runner.ClaudeBin`) so tests
 never need the real ones. Read [docs/architecture.md](docs/architecture.md)
 before changing the scheduler: it describes the loop, the developer worker's
@@ -55,9 +51,8 @@ are fine on the host.
 
 For focused iteration, run one package or one test inside a Dagger container
 started from the test runtime `dagger check` uses: `test-runtime` of the
-`busybees-dev` module in `.dagger/modules/busybees-dev`, `golang:1.26-bookworm`
-with a pinned `jj` release for `core/vcs/jj`'s tests. A tool a test needs is
-added there. From the repository root, for the root module:
+`busybees-dev` module in `.dagger/modules/busybees-dev`, `golang:1.26-bookworm`.
+A tool a test needs is added there. From the repository root:
 
 ```sh
 dagger call test-runtime \
@@ -67,24 +62,12 @@ dagger call test-runtime \
     combined-output
 ```
 
-For the standalone `core/` module, the same shape with the working directory
-inside it:
-
-```sh
-dagger call test-runtime \
-    with-directory --path /src --source . --exclude .git,.bees \
-    with-workdir --path /src/core \
-    with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./agent \
-    combined-output
-```
-
 The arguments after `--args=` are the `go test` command line, separated by
 commas. Add `-count=5` there to reproduce a flake and `-race` to match the
 race detector. Put the package before a flag `go` itself does not define:
 `go test -update ./internal/config` reads `./internal/config` as `-update`'s
 value and tests the current directory instead. Build with `go build ./...`
-from the repository root or from `core/` — on the host. See
-[core/README.md](core/README.md) for the execution boundary.
+on the host.
 
 The gate before committing is Dagger:
 
@@ -94,8 +77,7 @@ dagger check
 
 `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` from the
 `github.com/dagger/go` module installed by `dagger.toml`. `dagger check -l` lists
-the checks, and `dagger check go:test-all` runs one of them. Each check discovers
-both Go modules. The root `go.mod` uses a local replacement for `./core`.
+the checks, and `dagger check go:test-all` runs one of them.
 
 ### Testing rules
 
@@ -117,7 +99,7 @@ both Go modules. The root `go.mod` uses a local replacement for `./core`.
   stream-json `result` line; `Runner.ClaudeBin` is set to `os.Args[0]`. The
   session tests fake `claude` with a shell script the same way. Those two
   are the only executables a test binary may run as an agent: before a
-  session starts, `core/agent/agentbin.Resolve` refuses any other one when
+  session starts, agentcore's `agent/agentbin.Resolve` refuses any other one when
   `testing.Testing()` reports a `go test` build, whether the binary is
   running its tests or was started again as a command of its own (a test of
   `bees run` that executes the real command, say). A test that forgets its
@@ -135,43 +117,9 @@ both Go modules. The root `go.mod` uses a local replacement for `./core`.
   `bees mcp serve --listen` with one that reports an address. The review
   tests fake it with a script of their own that records the build and the
   run and writes a file into the mounted directory in place of the clone;
-  `internal/review` uses its own fake. `core/agent/agenttest` supplies the shared
-  session fakes; core's engine and host-server launches use the same guard as
-  agent launches. There is no opt-in path to real agents in the test suite.
-- `core/agent`'s enforcement tests (`TestLandlockHoldsATurnToItsGrants`,
-  `TestLandlockEnforcesWhatASessionReports`,
-  `TestLandlockLeavesTheRunnerUnconfined`) run a fake agent under the
-  kernel's enforcement, and skip, saying why, on a kernel without Landlock. Docker Desktop's kernel is one, so `dagger check` on a Mac skips
-  them. This runs them on Debian's kernel under QEMU, inside Dagger, with no
-  privileges:
-
-  ```sh
-  dagger core container from --address golang:1.26-trixie \
-    with-directory --path /src --source . --exclude .git,.bees \
-    with-exec --args=sh,/src/core/agent/testdata/landlock-vm/run.sh \
-    combined-output
-  ```
-
-  Run it after changing `core/agent/confine*.go` or `enforce.go`. It is not
-  a check: the gate stays `dagger check`.
-- macOS is a confinement platform too: Seatbelt, through
-  `/usr/bin/sandbox-exec`. `dagger check` tests the profile it is given
-  (`confine_seatbelt_test.go`), and nothing in it can test macOS's
-  enforcement. After changing `core/agent/confine*.go`, check it by hand
-  on a Mac, from `core/`:
-
-  ```sh
-  go run ./agent/testdata/seatbelt-check
-  go run ./agent/testdata/seatbelt-check -sandbox claude
-  go run ./agent/testdata/seatbelt-check -vcs
-  ```
-
-  Each run starts one confined turn whose agent is a shell script. The
-  script reads outside its mounts, writes into its read-only working
-  directory and runs `/usr/bin/git`. The program prints one line per
-  attempt and exits 1 when one was allowed that should have been refused,
-  or refused when it should have been allowed. With `-vcs`, `git` is
-  allowed.
+  `internal/review` uses its own fake. agentcore's `agent/agenttest` supplies the
+  shared session fakes; its engine and host-server launches use the same guard
+  as agent launches. There is no opt-in path to real agents in the test suite.
 - `skills.Manager.Git` is replaced with a copy of a fixture directory, so
   every supported repository layout is exercised offline.
 - `install.sh` is checked with `shellcheck -s sh install.sh`. No test runs it,

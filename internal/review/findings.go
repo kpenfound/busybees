@@ -1,6 +1,6 @@
 package review
 
-import core "github.com/kpenfound/busybees/core/review"
+import core "github.com/kpenfound/agentcore/review"
 
 type Finding = core.Finding
 type Findings = core.Findings

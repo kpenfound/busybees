@@ -35,8 +35,8 @@ import (
 	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
-	"github.com/kpenfound/busybees/core/agent"
-	"github.com/kpenfound/busybees/core/ops"
+	"github.com/kpenfound/agentcore/agent"
+	"github.com/kpenfound/agentcore/ops"
 	"github.com/kpenfound/busybees/internal/logging"
 )
 

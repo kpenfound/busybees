@@ -1,6 +1,6 @@
 package review
 
-import core "github.com/kpenfound/busybees/core/review"
+import core "github.com/kpenfound/agentcore/review"
 
 // Brief keeps the GitHub reference JSON artifacts are written with; core
 // owns its content.

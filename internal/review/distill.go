@@ -3,7 +3,7 @@ package review
 import (
 	"context"
 
-	core "github.com/kpenfound/busybees/core/review"
+	core "github.com/kpenfound/agentcore/review"
 )
 
 // DistillerName is the name of the distiller session, in an error message.

@@ -1,6 +1,6 @@
 package scheduler
 
-import "github.com/kpenfound/busybees/core/ops"
+import "github.com/kpenfound/agentcore/ops"
 
 // SharedPool is the fair core slot pool used across machine projects.
 type SharedPool = ops.SharedPool

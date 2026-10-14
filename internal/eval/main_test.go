@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kpenfound/busybees/core/agent/agenttest"
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/mail"
@@ -127,7 +127,7 @@ func fakeClaude() {
 		return
 	}
 	if len(os.Args) > 3 && os.Args[1] == "--pure" && os.Args[2] == "debug" {
-		fmt.Println(`{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{}}`)
+		fmt.Println(`{"agent":{"agentcore-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{}}`)
 		return
 	}
 	// A read-only session through the shared restricted execution — a

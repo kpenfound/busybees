@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kpenfound/busybees/core/agent/procs"
-	"github.com/kpenfound/busybees/core/vcs"
+	"github.com/kpenfound/agentcore/agent/procs"
+	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
