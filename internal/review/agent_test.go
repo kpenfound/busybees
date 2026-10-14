@@ -51,7 +51,7 @@ if [ "$2" = debug ]; then
     enabled=true
   fi
   printf '%s\n' "$OPENCODE_CONFIG_CONTENT" > "RECORD.config-inline"
-  printf '{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{"legacy":{"enabled":%s}}}\n' "$enabled" > "RECORD.config-content"
+  printf '{"agent":{"agentcore-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{"legacy":{"enabled":%s}}}\n' "$enabled" > "RECORD.config-content"
   cat "RECORD.config-content"
   exit 0
 fi`
@@ -580,7 +580,7 @@ func TestAnOpenCodeReviewSessionRunsItsOwnReadOnlyAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := args(t, record)
-	for _, want := range []string{"\n--pure\n", "\nrun\n", "\n--format\njson\n", "\n--agent\nbees-read-only\n", "\n--model\nanthropic/claude-sonnet\n", "\n--session\nopen-1\n"} {
+	for _, want := range []string{"\n--pure\n", "\nrun\n", "\n--format\njson\n", "\n--agent\nagentcore-read-only\n", "\n--model\nanthropic/claude-sonnet\n", "\n--session\nopen-1\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("opencode was not given %q:\n%s", want, got)
 		}
@@ -592,7 +592,7 @@ func TestAnOpenCodeReviewSessionRunsItsOwnReadOnlyAgent(t *testing.T) {
 	// plugins, are inline configuration the CLI is probed on having taken;
 	// the resolved configuration names every inherited server disabled.
 	inline := recorded(t, record, "config-inline")
-	for _, want := range []string{`"bees-read-only"`, `"*":"deny"`, `"read":"allow"`, `"grep":"allow"`, `"glob":"allow"`, `"share":"disabled"`, `"plugin":[]`} {
+	for _, want := range []string{`"agentcore-read-only"`, `"*":"deny"`, `"read":"allow"`, `"grep":"allow"`, `"glob":"allow"`, `"share":"disabled"`, `"plugin":[]`} {
 		if !strings.Contains(inline, want) {
 			t.Errorf("the restricted configuration lacked %q:\n%s", want, inline)
 		}
@@ -827,7 +827,7 @@ func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 					t.Errorf("thread/start params = %v, want sandbox read-only and model chosen", ts)
 				}
 			case config.AgentOpenCode:
-				wants = append(wants, "\n--agent\nbees-read-only\n")
+				wants = append(wants, "\n--agent\nagentcore-read-only\n")
 				// opencode takes effort as the read-only agent's variant,
 				// in the inline configuration, not on the command line.
 				if !strings.Contains(recorded(t, record, "config-inline"), `"variant":"max"`) {
@@ -969,7 +969,7 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 		want   []string
 	}{
 		{overloadedRecord, []string{"\napp-server\n", "\nfeatures.shell_tool=false\n"}},
-		{answeringRecord, []string{"\n--pure\n", "\n--agent\nbees-read-only\n"}},
+		{answeringRecord, []string{"\n--pure\n", "\n--agent\nagentcore-read-only\n"}},
 	} {
 		got := args(t, tc.record)
 		for _, want := range tc.want {
