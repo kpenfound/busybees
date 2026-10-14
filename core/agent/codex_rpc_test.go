@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // codexFakeRPC is an in-process codex app-server double: it reads the
@@ -1022,6 +1023,102 @@ func TestCodexRPCFinalAnswerFromRecordedTurn(t *testing.T) {
 	want := []string{"MCP tool review/read_context failed: MCP tool call requires approval, but approval policy is never"}
 	if !reflect.DeepEqual(out.Diagnostics, want) {
 		t.Errorf("Diagnostics = %q, want %q", out.Diagnostics, want)
+	}
+}
+
+// TestCodexRPCMCPToolFailureText exercises result.content fallbacks through
+// the conversation, preserving error.message precedence and the raw transcript.
+func TestCodexRPCMCPToolFailureText(t *testing.T) {
+	const prefix = "MCP tool osmia_0/inspect_code failed"
+	const item = `{"type":"mcpToolCall","server":"osmia_0","tool":"inspect_code","status":"failed"`
+	textResult := func(text string) string {
+		return `,"result":{"content":[{"type":"text","text":` + strconv.Quote(text) + `}]}`
+	}
+	cutPrefix := strings.Repeat("a", 299)
+	cases := []struct {
+		name   string
+		fields string
+		want   string
+	}{
+		{"issue payload", `,"error":null,"result":{"content":[{"type":"text","text":"unit writer is still running; ..."}]}`, prefix + ": unit writer is still running; ..."},
+		{"absent error", textResult("try again"), prefix + ": try again"},
+		{"empty error message", `,"error":{"message":""}` + textResult("try again"), prefix + ": try again"},
+		{"missing error message", `,"error":{}` + textResult("try again"), prefix + ": try again"},
+		{"first non-empty text", `,"result":{"content":[{"type":"image","text":"ignore"},{"type":"text","text":""},{"type":"text","text":"first"},{"type":"text","text":"later"}]}`, prefix + ": first"},
+		{"at bound", textResult(strings.Repeat("a", 300)), prefix + ": " + strings.Repeat("a", 300)},
+		{"over bound", textResult(strings.Repeat("a", 301)), prefix + ": " + strings.Repeat("a", 300) + "…"},
+		{"UTF-8 cut", textResult(cutPrefix + "界tail"), prefix + ": " + cutPrefix + "…"},
+		{"UTF-8 at bound", textResult(strings.Repeat("a", 297) + "界tail"), prefix + ": " + strings.Repeat("a", 297) + "界…"},
+		{"absent result", "", prefix},
+		{"null result", `,"result":null`, prefix},
+		{"missing content", `,"result":{}`, prefix},
+		{"null content", `,"result":{"content":null}`, prefix},
+		{"empty content", `,"result":{"content":[]}`, prefix},
+		{"non-text content", `,"result":{"content":[{"type":"image","text":"ignore"}]}`, prefix},
+		{"empty text", textResult(""), prefix},
+		{"error precedence", `,"error":{"message":"original error"}` + textResult("fallback"), prefix + ": original error"},
+		{"long error unchanged", `,"error":{"message":` + strconv.Quote(strings.Repeat("e", 400)) + `}` + textResult("fallback"), prefix + ": " + strings.Repeat("e", 400)},
+		{"error with other result shape", `,"error":{"message":"original error"},"result":"other"`, prefix + ": original error"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			line := `{"method":"item/completed","params":{"item":` + item + c.fields + `}}}`
+			out, err, transcript := runCodexFakeConversation(t, codexRPCTurn{Cwd: "/w", Prompt: "p"}, func(f *codexFakeRPC) {
+				codexHandshake(f)
+				f.raw(line)
+				f.raw(`{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"answer","phase":"final_answer"}}}`)
+				f.raw(`{"method":"turn/completed","params":{"turn":{"status":"completed"}}}`)
+				if _, ok := f.recv(); ok {
+					t.Error("unexpected driver traffic after turn/completed")
+				}
+			})
+			if err != nil {
+				t.Fatalf("codexRPCRun: %v", err)
+			}
+			if want := []string{c.want}; !reflect.DeepEqual(out.Diagnostics, want) {
+				t.Errorf("Diagnostics = %q, want %q", out.Diagnostics, want)
+			}
+			for _, diagnostic := range out.Diagnostics {
+				if !utf8.ValidString(diagnostic) {
+					t.Errorf("invalid UTF-8 diagnostic: %q", diagnostic)
+				}
+			}
+			if out.NumTurns != 2 || out.Result != "answer" || out.Subtype != "success" {
+				t.Errorf("unexpected turn outcome: %+v", out)
+			}
+			if strings.Count(transcript, line+"\n") != 1 {
+				t.Errorf("transcript must retain the original item exactly once: %s", transcript)
+			}
+		})
+	}
+}
+
+// TestCodexRPCMCPToolFailureDedup keeps rendered diagnostics once, in
+// arrival order, including different long results with the same bounded text.
+func TestCodexRPCMCPToolFailureDedup(t *testing.T) {
+	const prefix = "MCP tool osmia_0/inspect_code failed: "
+	longPrefix := strings.Repeat("x", 300)
+	texts := []string{"first", "first", "second", longPrefix + "one", longPrefix + "two", "first"}
+	out, err, _ := runCodexFakeConversation(t, codexRPCTurn{Cwd: "/w", Prompt: "p"}, func(f *codexFakeRPC) {
+		codexHandshake(f)
+		for _, text := range texts {
+			f.raw(`{"method":"item/completed","params":{"item":{"type":"mcpToolCall","server":"osmia_0","tool":"inspect_code","status":"failed","error":null,"result":{"content":[{"type":"text","text":` + strconv.Quote(text) + `}]}}}}`)
+		}
+		// Content on a successful tool call or a different item type is ignored.
+		f.raw(`{"method":"item/completed","params":{"item":{"type":"mcpToolCall","server":"osmia_0","tool":"inspect_code","status":"completed","result":{"content":[{"type":"text","text":"success"}]}}}}`)
+		f.raw(`{"method":"item/completed","params":{"item":{"type":"commandExecution","status":"failed","result":{"content":[{"type":"text","text":"command"}]}}}}`)
+		f.raw(`{"method":"turn/completed","params":{"turn":{"status":"completed"}}}`)
+		f.recv()
+	})
+	if err != nil {
+		t.Fatalf("codexRPCRun: %v", err)
+	}
+	want := []string{prefix + "first", prefix + "second", prefix + longPrefix + "…"}
+	if !reflect.DeepEqual(out.Diagnostics, want) {
+		t.Errorf("Diagnostics = %q, want %q", out.Diagnostics, want)
+	}
+	if out.NumTurns != len(texts)+2 || out.Result != "" {
+		t.Errorf("unexpected turn outcome: %+v", out)
 	}
 }
 
