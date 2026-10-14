@@ -34,7 +34,7 @@ import (
 	"sync"
 	"time"
 
-	coreskills "github.com/kpenfound/busybees/core/skills"
+	coreskills "github.com/kpenfound/agentcore/skills"
 )
 
 // Spec is a parsed skill reference: core/skills' Ref, under the name bees

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kpenfound/busybees/core/agent"
+	"github.com/kpenfound/agentcore/agent"
 )
 
 // Sandbox modes accepted by the sandbox key, weakest first: how much of the

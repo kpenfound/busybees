@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kpenfound/busybees/core/vcs"
+	"github.com/kpenfound/agentcore/vcs"
 )
 
 // Workspace is a temporary directory containing a git worktree.

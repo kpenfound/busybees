@@ -5,7 +5,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/kpenfound/busybees/core/mcphost"
+	"github.com/kpenfound/agentcore/mcphost"
 )
 
 // Tools lists the session's tools through the same handlers as MCP clients.

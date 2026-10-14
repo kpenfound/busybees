@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	core "github.com/kpenfound/busybees/core/review"
+	core "github.com/kpenfound/agentcore/review"
 )
 
 // Generated files, and the diff read without them. A pull request that

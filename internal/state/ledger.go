@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kpenfound/busybees/core/ops"
+	"github.com/kpenfound/agentcore/ops"
 )
 
 // LedgerEntry is the core accounting record; migration belongs to this adapter.

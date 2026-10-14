@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	core "github.com/kpenfound/busybees/core/review"
+	core "github.com/kpenfound/agentcore/review"
 	"github.com/kpenfound/busybees/internal/text"
 )
 

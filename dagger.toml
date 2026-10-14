@@ -7,13 +7,10 @@
 source = "github.com/dagger/go@collections"
 
 # The Go tests, linters and generators run in busybees-dev's test runtime
-# (.dagger/modules/busybees-dev): golang:1.26-bookworm with jj, which
-# core/vcs/jj's replay tests run.
+# (.dagger/modules/busybees-dev): golang:1.26-bookworm.
 [modules.go.settings]
 base = "dag://busybees-dev/test-runtime"
 
-# Both the root module and standalone core/ module are discovered below.
-# The root module replaces its core dependency with ./core.
 # The module treats every go.mod in the workspace as a Go module to check, and
 # the workspace does not read .gitignore. A session may leave a copy of go.mod
 # in its own directory under .bees/ (factory state, never source), where

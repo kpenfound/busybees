@@ -15,9 +15,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/kpenfound/busybees/core/agent"
-	"github.com/kpenfound/busybees/core/agent/agentbin"
-	"github.com/kpenfound/busybees/core/agent/agenttest"
+	"github.com/kpenfound/agentcore/agent"
+	"github.com/kpenfound/agentcore/agent/agentbin"
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 )
 

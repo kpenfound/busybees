@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kpenfound/busybees/core/ops"
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/agentcore/ops"
+	"github.com/kpenfound/agentcore/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/statemigrate"

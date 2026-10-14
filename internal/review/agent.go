@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kpenfound/busybees/core/agent"
-	core "github.com/kpenfound/busybees/core/review"
-	"github.com/kpenfound/busybees/core/vcs"
+	"github.com/kpenfound/agentcore/agent"
+	core "github.com/kpenfound/agentcore/review"
+	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 )
 

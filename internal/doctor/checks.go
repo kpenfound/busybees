@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kpenfound/busybees/core/agent"
-	"github.com/kpenfound/busybees/core/agent/agentbin"
-	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/agentcore/agent"
+	"github.com/kpenfound/agentcore/agent/agentbin"
+	"github.com/kpenfound/agentcore/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghapp"
 	"github.com/kpenfound/busybees/internal/github"

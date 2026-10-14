@@ -908,7 +908,7 @@ for what `bees status` prints.
 
 ## Running a session
 
-The scheduler acquires and releases `core/vcs.Workspace` values through a
+The scheduler acquires and releases agentcore's `vcs.Workspace` values through a
 provider interface. `internal/workspace` is the git adapter: it supplies the
 working directory and shared git metadata mounts, and retains serialized
 creation, fetch, removal and prune operations. Core's session runner performs
@@ -1277,7 +1277,7 @@ The `Minter` polls for `refresh` once a second and mints only when its cached
 token is itself about to expire, so every session shares one token per hour.
 A `bees` command inside a session reads the same file through
 `ghapp.FileSource`. `bin/gh` goes first on the host session's `PATH`, and in a
-container or sandbox in front of the image's through core's
+container or sandbox in front of the image's through agentcore's
 `Request.VCSContainerPath`, only for a session with VCS access.
 
 ## The mailbox
@@ -1391,7 +1391,7 @@ sessions get `BEES_STATE_DIR`.
 
 ### Runtime identity and upgrades
 
-Runtime records carry `work: {key, tags}`. Keys are opaque strings in core;
+Runtime records carry `work: {key, tags}`. Keys are opaque strings in agentcore;
 busybees maps GitHub subjects to `issue-N` or `pr-N`, using the issue key when
 both are known. The `github.issue` and `github.pr` string tags retain both
 addresses for routing and display. Bookkeeping filenames use `work-` followed

@@ -1,7 +1,7 @@
 package session
 
 import (
-	"github.com/kpenfound/busybees/core/agent"
+	"github.com/kpenfound/agentcore/agent"
 	"github.com/kpenfound/busybees/internal/ghwork"
 )
 

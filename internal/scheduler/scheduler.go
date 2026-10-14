@@ -27,9 +27,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kpenfound/busybees/core/ops"
-	"github.com/kpenfound/busybees/core/vcs"
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/agentcore/ops"
+	"github.com/kpenfound/agentcore/vcs"
+	"github.com/kpenfound/agentcore/work"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"

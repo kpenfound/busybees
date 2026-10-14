@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kpenfound/busybees/core/ops"
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/agentcore/ops"
+	"github.com/kpenfound/agentcore/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/session"
