@@ -1914,3 +1914,35 @@ func TestReleaseManagerTaskNamesTheMilestone(t *testing.T) {
 		t.Errorf("without a closed issue the task should name the milestone for issue_create:\n%s", task)
 	}
 }
+
+// Both full and verification rounds retain Jev's order, and an eliminated
+// list is not described as angles finding nothing.
+func TestReviewerJevOrderingAndEmptyList(t *testing.T) {
+	for _, verify := range []bool{false, true} {
+		d := sample()
+		d.Review = sampleReview()
+		d.Review.JevRanked = true
+		d.Review.Verify = verify
+		for _, render := range []func(string, Data) (string, error){Task, func(role string, d Data) (string, error) { return System(role, d, "") }} {
+			prompt, err := render(config.RoleReviewer, d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(prompt, "Jev probability, highest first") || strings.Contains(prompt, "most severe first") {
+				t.Fatal(prompt)
+			}
+		}
+	}
+	d := sample()
+	d.Review = sampleReview()
+	d.Review.JevRanked = true
+	d.Review.Count = 0
+	d.Review.Findings = ""
+	prompt, err := Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "Jev eliminated every finding") || strings.Contains(prompt, "no angle found anything") {
+		t.Fatal(prompt)
+	}
+}

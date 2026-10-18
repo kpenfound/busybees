@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kpenfound/agentcore/jev"
 	"github.com/kpenfound/agentcore/ops"
 	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/agentcore/work"
@@ -63,6 +64,8 @@ type Deps struct {
 	Workspaces WorkspaceProvider
 	Store      *state.Store
 	Logger     *slog.Logger
+	// Jev is the process-wide review Judge, built by cmd/bees. Nil disables the boost.
+	Jev *jev.Judge
 	// Notes is the backend a role's notes live in (notes.backend), the one
 	// the session's notes_read and notes_write use. The scheduler only
 	// measures them with it, for the notes_max_bytes consolidation
@@ -111,6 +114,7 @@ type Scheduler struct {
 	upstream *github.Client
 	mail     *mail.Box
 	runner   *session.Runner
+	jev      *jev.Judge
 	ws       WorkspaceProvider
 	store    *state.Store
 	notes    mcpserver.Notes
@@ -263,6 +267,7 @@ func New(d Deps) (*Scheduler, error) {
 		upstream:     &upstream,
 		mail:         d.Mail,
 		runner:       d.Runner,
+		jev:          d.Jev,
 		ws:           d.Workspaces,
 		store:        d.Store,
 		notes:        d.Notes,

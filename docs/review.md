@@ -47,7 +47,8 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
 4. **Findings.** bees merges the angles' answers into one list, in code and
    not in a session (see [Findings](#findings)), then applies the rules in
    your [reviewer notes](#reviewer-notes): a finding you dismissed before is
-   dropped or ranked down.
+   dropped or ranked down. The optional [Jev boost](#jev-boost) then ranks
+   findings and removes those below its threshold.
 5. **Triage.** You take each finding in turn and select, dismiss, defer or
    ask about it. With `--agent`, an agent session does it instead: see
    [factory mode](cli.md#factory-mode).
@@ -226,6 +227,76 @@ The merge is the same for every review:
 - **The id** is a hash of the file, side, lines and title, so a finding
   keeps its id when the list is merged again.
 
+## Jev boost
+
+Set `OPENROUTER_API_KEY` in the environment of `bees` to enable Jev,
+TypeSafe's System One model, for reviews with findings:
+
+```sh
+export OPENROUTER_API_KEY   # set its value in your shell or secret manager
+bees review acme/widgets#7
+```
+
+With that variable unset or empty, reviews make no Jev request, write no
+Jev record or progress line, and keep the ordinary findings and order. A
+review with no findings also makes no request.
+
+After merging, generated-file exclusion and reviewer-notes filtering, Jev
+estimates the probability that each finding is a correct, specific and
+actionable problem the author should address. Findings below **0.3** are
+removed; those at or above 0.3 reach triage in probability order, highest
+first. Ties keep merge order. Jev preserves each finding's text, severity,
+ID and anchor, and does not add findings or change reviewer notes.
+
+### What Jev sees
+
+- A guide defining what makes a finding worth raising.
+- The brief's pull request reference, title, summary, size, acceptance
+  criteria and style rules with their sources, and touched areas.
+- Changed-file paths with added and removed line counts, and the generated
+  files excluded from the review.
+- Reviewer-notes rules, when present.
+- Every finding's angle and other reporting angles, category, severity,
+  file, line range, side, title, body, suggestion, evidence and sources.
+
+Jev never receives the diff text, `diff.patch` or checkout file contents.
+Text an angle quotes in a finding's body, suggestion or evidence is sent
+as part of that finding. The API key is sent only as the endpoint's bearer
+credential; it is never written into prompts, logs or artifacts.
+
+The request allows at most 48 KiB of state and 64 KiB on the wire. Context
+is shortened in this order: touched areas, excluded files, changed files,
+notes rules, style rules, acceptance criteria, summary, title. Each part
+is halved until it fits or becomes a shortening marker, before moving to
+the next. The guide, reference, size and complete findings are retained.
+If those alone cannot fit, the review falls back without a request.
+
+### Records and fallbacks
+
+When Jev evaluates findings, `jev.json` beside `findings.json` records the
+outcome, fallback reason and detail, configured and answering models,
+probabilities, kept findings in ranked order, full eliminated findings,
+usage, request count, duration, policy version and threshold. A progress
+line says how many findings Jev ranked and eliminated, or why it fell back.
+
+Invalid settings, oversized or rejected requests, timeouts, rate limits,
+provider outages, unusable responses and cooldowns all preserve the
+unboosted findings and order. Each request has a bounded timeout; a timeout
+or outage allows one retry. Rate limits and repeated outages start a
+cooldown shared by every review in the process. Cancelling only the Jev
+request also falls back. Cancelling the review itself keeps the caller's
+cancellation handling; it does not complete the factory review round.
+
+The factory's developer-loop and requested reviews use agentcore's default
+Jev settings when `OPENROUTER_API_KEY` is set for the `bees` process. One
+Judge serves every project scheduler, including projects added or restarted
+through reload, so a failure in one project can make another fall back with
+`cooling_down` without a provider request. The factory log carries the Jev
+line, and its judge session receives the ranked findings with eliminated
+ones removed. Later verification rounds use the saved findings and make
+no Jev request. The factory does not read the review configuration's
+`[jev]` table; there is no `bees.toml` setting for the boost.
+
 ## Reviewer notes
 
 Your reviewer notes are one markdown file, `reviewer-notes.md` next to your
@@ -313,6 +384,7 @@ goes:
                         also holds diff.patch, on the same terms
   findings.json         the merged list, and what your notes hid from it
   triage.json           every triage decision, in order
+  jev.json              the optional Jev judgment, including eliminated findings
 ```
 
 The directory name is when the review started, in UTC. A review that stopped
@@ -374,7 +446,28 @@ token = "$REVIEW_GH_TOKEN"
 | `output` | string | `"ask"` | How a review ends without `--post` or `--report`: `ask`, `approve`, `comment`, `reject`, `report` or `discard` |
 | `github.token` | string | none | The token the review's `gh` calls use; without it, your own `gh` login |
 | `github.app_id`, `github.private_key` | int, string | none | A [GitHub App](configuration.md#github) the review acts as instead of a token, with `private_key` in the forms `bees.toml` takes |
+| `jev` | table | agentcore defaults | Optional ranking settings; see below |
 | `github.login` | string | none | Accepted so a `[github]` table from `bees.toml` moves across unchanged; a review does not use it |
+
+The optional `[jev]` table configures the [Jev boost](#jev-boost). These
+are agentcore's defaults:
+
+```toml
+[jev]
+url = "https://openrouter.ai/api"
+model = "~typesafe/jev-latest"
+api_key_env = "OPENROUTER_API_KEY"
+timeout = "10s"
+```
+
+`url` is an HTTP(S) base URL without credentials, a query or a fragment;
+requests go to `<url>/v1/systemone`. `model` names a model in at most 128
+characters without whitespace. `api_key_env` names the environment variable
+holding the key; its value never belongs in this file. `timeout` is positive
+and at most `"1m"`, and bounds each request. Unknown keys and invalid values
+fail configuration loading with the key named, even when the boost is off.
+There is no separate enable setting: a nonempty value in `api_key_env`'s
+variable turns it on.
 
 A path is absolute, starts with `~`, or is relative to the directory
 `config.toml` is in, which puts the defaults at

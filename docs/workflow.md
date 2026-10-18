@@ -782,7 +782,10 @@ request](review.md)), run on the worker's checkout of the pull request
 branch: a brief of the change is distilled from its context and sized, one
 read-only session per angle `roles.reviewer.angles` gives that size looks
 for problems from that angle alone, and the judge merges what they found
-into one list, most severe first. `brief_profile`, `angle_profiles` and
+into one list, most severe first. With the optional [Jev boost](review.md#jev-boost),
+the findings are then ranked by probability and those below 0.3 removed
+before the reviewer session receives them; `jev.json` retains the judgment
+and eliminated findings. `brief_profile`, `angle_profiles` and
 `judge_profile` select named profiles after the reviewer's size-resolved
 profile; unspecified phases retain that fallback. Brief/angle profiles run
 any of the four agents — claude, codex, opencode or pi — each held to the

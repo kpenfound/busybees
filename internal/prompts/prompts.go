@@ -209,10 +209,12 @@ type Review struct {
 	Angles  []string
 	Skipped []string
 	// Count is how many findings the judge kept and Findings the list
-	// rendered as markdown (review.RenderFindings), most severe first;
+	// rendered as markdown (review.RenderFindings), in review order;
 	// "" when it kept none.
 	Count    int
 	Findings string
+	// JevRanked means the accepted Jev judgment ranked the saved findings.
+	JevRanked bool
 	// Artifact is the directory the review is kept in (review.ArtifactDir
 	// under the state directory's reviews/), for a person to read.
 	Artifact string

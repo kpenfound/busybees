@@ -426,7 +426,8 @@ of this section describes the review of a developer's pull request.
 
 **Reads.** The pull request (title, body, branches, author); the issue with
 its body; the findings the [review pipeline](#review-pipeline-rolesreviewerangles)
-already produced for it, most severe first, with the size it judged the
+already produced for it, most severe first or, with the [Jev boost](review.md#jev-boost),
+in descending probability order with eliminated findings removed, with the size it judged the
 change and the angles that size ran; the pull request's checks as read just
 before the first review, or a line saying nothing was verified; unread mail
 addressed to `reviewer` about the issue or the pull request; the round number
@@ -536,7 +537,10 @@ of the change, its size (`xs` to `xl`, judged from the scope and the risk of
 the diff) and its acceptance criteria; one session per angle the size calls
 for reads the brief and the diff and looks for problems from that angle
 alone; and the judge, deterministic code and not a session, merges what the
-angles found into one list, most severe first. The brief and angle sessions
+angles found into one list, most severe first. The optional [Jev boost](review.md#jev-boost)
+then ranks the findings by probability and removes those below 0.3 before
+the reviewer session receives them, retaining eliminated findings in the
+judgment record. The brief and angle sessions
 run read-only, with no MCP server but the read-only file server bees gives a
 codex session, and no tool that writes, runs or fetches, in a local clone of the pull request's checkout; only the judge step is a
 factory session, and it does not review the change again: it posts the list

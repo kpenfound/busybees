@@ -16,6 +16,9 @@ import (
 	"github.com/kpenfound/busybees/internal/text"
 )
 
+// newReviewRunner constructs the configured runner; tests replace its provider with a fake.
+var newReviewRunner = review.NewRunner
+
 // ---- review ----------------------------------------------------------------
 
 // newReviewCmd holds `bees review`, the pull request review tool, which a
@@ -83,7 +86,7 @@ again.`,
 			if err != nil {
 				return err
 			}
-			runner, err := review.NewRunner(ctx, ref, cfg, cwd)
+			runner, err := newReviewRunner(ctx, ref, cfg, cwd)
 			if err != nil {
 				return err
 			}
