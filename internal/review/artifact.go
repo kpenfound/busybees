@@ -40,6 +40,9 @@ import (
 //	                                               with what the reviewer
 //	                                               notes hid from it
 //	                                               (noise.go)
+//	  jev.json                                     optional Jev judgment: ranking,
+//	                                               eliminated findings and fallback
+//	                                               reason (only with the boost on)
 //	  triage.json                                  what triage decided about
 //	                                               each finding (triage.go),
 //	                                               empty until it has

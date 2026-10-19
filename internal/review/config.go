@@ -172,6 +172,9 @@ type Config struct {
 
 	GitHub GitHub `toml:"github"`
 
+	// Jev configures the optional boost; the API key itself is never a setting.
+	Jev JevConfig `toml:"jev"`
+
 	// fromDefaults records, under the name an error names a key by, every
 	// key mergeUserDefaults filled from defaults.toml. Validate prefixes
 	// those errors with the defaults file's path, which the header naming
@@ -328,7 +331,7 @@ func parseConfig(text, path string, present bool, defaults *config.UserDefaults)
 	if err != nil {
 		return nil, err
 	}
-	cfg := Config{Path: abs, Loaded: present}
+	cfg := Config{Path: abs, Loaded: present, Jev: defaultJevConfig()}
 	md, err := toml.Decode(text, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", abs, err)
@@ -517,6 +520,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, c.checkProfile("angle_profiles."+angle, c.AngleProfiles[angle], true)...)
 	}
 	errs = append(errs, c.GitHub.validate()...)
+	errs = append(errs, c.Jev.validate()...)
 	return invalid(c.Path, c.attributeDefaults(errs))
 }
 

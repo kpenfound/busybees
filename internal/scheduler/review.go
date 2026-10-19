@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kpenfound/agentcore/jev"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -139,6 +141,7 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 			Checkout: checkout,
 		},
 		Storage: storage,
+		Jev:     s.jev,
 		AnglesReady: func(angles []string) {
 			activity.Kind, activity.Phase, activity.Total = EventReviewProgress, "angles", len(angles)
 			s.publish(activity)
@@ -213,6 +216,16 @@ func (s *Scheduler) reviewAgentFor(role config.ResolvedRole) *review.CLIAgent {
 // the judge's list rendered, and where the artifact is.
 func reviewData(a *review.Artifact) *prompts.Review {
 	r := &prompts.Review{Artifact: a.Dir}
+	// The judgment is optional. Its accepted outcome describes the ordering
+	// of the persisted findings, including when verifyReview reopens them.
+	if data, err := os.ReadFile(filepath.Join(a.Dir, review.JevFile)); err == nil {
+		var judgment struct {
+			Outcome jev.Outcome `json:"outcome"`
+		}
+		if json.Unmarshal(data, &judgment) == nil {
+			r.JevRanked = judgment.Outcome == jev.Accepted
+		}
+	}
 	if a.Brief != nil {
 		r.Size, r.Summary = a.Brief.Size, a.Brief.Summary
 	}

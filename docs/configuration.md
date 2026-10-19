@@ -33,6 +33,55 @@ Durations are written the way Go reads them: `"30s"`, `"5m"`, `"1h30m"`.
 `defaults.toml` below the first; [Reviewing a pull
 request](review.md#configuration) describes all three.
 
+## Jev review settings
+
+Set `OPENROUTER_API_KEY` for the `bees` process to enable the optional
+[Jev boost](review.md#jev-boost). With the variable unset or empty, reviews
+make no Jev request and add no record or log line. The factory uses
+agentcore's default settings and one Judge per process across developer
+reviews, requested reviews and all project schedulers, including projects
+added or restarted through reload. A cooldown in one project applies to
+the others. There is no `bees.toml` key for Jev.
+
+For `bees review`, put overrides in `~/.config/bees/config.toml`:
+
+```toml
+[jev]
+url = "https://openrouter.ai/api"
+model = "~typesafe/jev-latest"
+api_key_env = "OPENROUTER_API_KEY"
+timeout = "10s"
+```
+
+These are the defaults. The factory does not read this table. `url` is an
+HTTP(S) base URL without credentials, query or fragment; the endpoint is
+`<url>/v1/systemone`. `model` is at most 128 characters without whitespace.
+`api_key_env` is an environment variable's name, never its secret value.
+`timeout` bounds each request, must be positive and cannot exceed `"1m"`.
+Unknown keys and invalid values fail with an error naming the key, even
+with the boost off.
+
+Jev sees a guide, the brief's change description, acceptance criteria,
+style rules and touched areas, changed-file paths and line counts,
+generated-file exclusions, reviewer-notes rules and complete findings.
+It never receives the diff, `diff.patch` or checkout file contents. Text
+quoted in findings is sent as written. The key goes only to the configured
+endpoint as a bearer credential.
+
+Findings with a probability below **0.3** are removed; the rest reach triage
+or the factory's judge session in descending probability order, preserving
+ties. `jev.json` in the review artifact records the outcome, fallback reason
+and detail, models, probabilities, kept and full eliminated findings, usage,
+request count, duration, version and threshold. The progress or factory log
+reports ranked and eliminated counts, or the fallback reason.
+
+Invalid settings, oversized or rejected requests, timeouts, rate limits,
+outages, unusable responses, cooldowns and cancellation of the Jev request
+alone leave the unboosted list intact. A timeout or outage allows one retry.
+Cancelling the review itself retains ordinary cancellation handling.
+[Reviewing a pull request](review.md#jev-boost) describes context shortening,
+recording and shared cooldowns.
+
 ## User-level profile defaults
 
 Every project load also reads `defaults.toml` beside that review configuration:

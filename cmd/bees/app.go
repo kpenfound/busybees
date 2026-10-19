@@ -7,12 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sync"
 
+	"github.com/kpenfound/agentcore/jev"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/mcpserver"
+	"github.com/kpenfound/busybees/internal/review"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/skills"
@@ -20,6 +23,12 @@ import (
 	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
+
+// factoryReviewJudge retains one Judge across every project and reload in this process.
+// It uses agentcore defaults, independently of the standalone review configuration.
+var factoryReviewJudge = sync.OnceValue(func() *jev.Judge {
+	return review.NewJevJudge(jev.DefaultSettings())
+})
 
 // app wires the packages together for the scheduler commands.
 type app struct {
@@ -250,6 +259,7 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 		Version:    buildVersion,
 		Revision:   buildRevision,
 		Shared:     a.shared,
+		Jev:        factoryReviewJudge(),
 	})
 }
 

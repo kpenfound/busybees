@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kpenfound/agentcore/jev"
 	core "github.com/kpenfound/agentcore/review"
 	"github.com/kpenfound/busybees/internal/text"
 )
@@ -33,6 +34,8 @@ type Runner struct {
 	// noise filter applies. A person who has dismissed nothing has empty
 	// ones.
 	Notes *Notes
+	// Jev is shared by every review in this process. Nil leaves findings unchanged.
+	Jev *jev.Judge
 	// Storage is the directory the artifact directory is created under,
 	// the global configuration's resolved storage path.
 	Storage string
@@ -75,6 +78,7 @@ func NewRunner(ctx context.Context, ref Ref, cfg *Config, dir string) (*Runner, 
 		Distiller: NewDistiller(cfg, pipeline.Dir),
 		Angles:    angles,
 		Notes:     notes,
+		Jev:       NewJevJudge(cfg.Jev.Settings()),
 		Storage:   cfg.ResolvedStoragePath(),
 	}, nil
 }
@@ -129,7 +133,14 @@ func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
 		Angles:    r.Angles.core(ref), Settings: r.Pipeline.Project.core(), Rules: coreRules(r.rules()),
 		Compare: compareFindingsText, Log: r.Log, Progress: r.Progress, AnglesReady: r.AnglesReady,
 	}
-	return pipeline.Run(ctx, a.Dir, bundle.core(), diff)
+	a, err = pipeline.Run(ctx, a.Dir, bundle.core(), diff)
+	if err != nil {
+		return a, err
+	}
+	if err := r.boost(ctx, a, diff); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 // Queue is the triage queue over a review this runner ran: the artifact
