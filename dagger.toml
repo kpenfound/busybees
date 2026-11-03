@@ -55,7 +55,7 @@ module = "dagger-dang-sdk"
 is-module = true
 
 [modules.busybees-dev]
-entrypoint = true
+main = true
 source = ".dagger/modules/busybees-dev"
 
 [sdks.dang.scopes.".dagger/modules/busybees-dev"]
