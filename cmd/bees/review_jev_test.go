@@ -138,7 +138,7 @@ func TestMachineReviewsShareJevCooldownAcrossReload(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "machine-test-key")
 	jevPipelineAgent(t)
 	p := &jevtest.Provider{Results: []jevtest.Result{{Err: &systemone.Error{Kind: systemone.KindRateLimited, Message: "fake rate limit"}}}}
-	judge := review.NewJevJudge(jev.DefaultSettings())
+	judge := review.NewJevJudge(review.DefaultJevSettings())
 	judge.Provider = p.Factory()
 	// A fixed clock prevents a slow machine from expiring the cooldown.
 	judge.Now = func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
@@ -227,7 +227,8 @@ func TestFactoryReviewJudgeUsesProcessDefaults(t *testing.T) {
 	if j != factoryReviewJudge() {
 		t.Fatal("Judge was constructed more than once")
 	}
-	if got, want := j.Config(), jev.DefaultSettings(); got != want {
+	want := jev.Settings{URL: "https://openrouter.ai/api", Model: "~typesafe/jev-latest", APIKeyEnv: "OPENROUTER_API_KEY", Timeout: 10 * time.Second}
+	if got := j.Config(); got != want {
 		t.Fatalf("factory settings=%+v, want %+v", got, want)
 	}
 	t.Setenv("OPENROUTER_API_KEY", "test-key")

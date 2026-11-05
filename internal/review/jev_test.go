@@ -22,7 +22,7 @@ const jevTestKey = "secret-jev-credential-never-record"
 
 func fakeJev(p *jevtest.Provider) *jev.Judge {
 	return &jev.Judge{
-		Config: func() jev.Settings { s := jev.DefaultSettings(); s.Enabled = true; return s },
+		Config: func() jev.Settings { s := DefaultJevSettings(); s.Enabled = true; return s },
 		Getenv: func(string) string { return jevTestKey }, Provider: p.Factory(),
 	}
 }
@@ -98,14 +98,14 @@ func TestJevOffPreservesArtifactFilesAndOrder(t *testing.T) {
 	baseline, _ := runJevReview(t, nil, &reviewAgent{})
 	for _, unset := range []bool{true, false} {
 		t.Run(fmt.Sprint("unset-", unset), func(t *testing.T) {
-			t.Setenv(jev.DefaultAPIKeyEnv, "")
+			t.Setenv(DefaultJevSettings().APIKeyEnv, "")
 			if unset {
-				if err := os.Unsetenv(jev.DefaultAPIKeyEnv); err != nil {
+				if err := os.Unsetenv(DefaultJevSettings().APIKeyEnv); err != nil {
 					t.Fatal(err)
 				}
 			}
 			p := &jevtest.Provider{Results: []jevtest.Result{jevAnswer(0.1, 0.9, 0.8)}}
-			j := NewJevJudge(jev.DefaultSettings())
+			j := NewJevJudge(DefaultJevSettings())
 			j.Provider = p.Factory()
 			a, log := runJevReview(t, j, &reviewAgent{})
 			if len(p.Requests()) != 0 || strings.Contains(log, "\nJev ") {
@@ -173,7 +173,7 @@ func TestJevRanksEliminatesAndPreservesFullFindings(t *testing.T) {
 				t.Fatal("queue differs")
 			}
 			rec := readJev(t, a)
-			if rec.Outcome != jev.Accepted || rec.Version != JevVersion || rec.Threshold != JevThreshold || rec.AnsweringModel != "answered-model" || rec.ConfiguredModel != jev.DefaultModel || rec.Usage == nil || rec.Usage.InputTokens != 120 {
+			if rec.Outcome != jev.Accepted || rec.Version != JevVersion || rec.Threshold != JevThreshold || rec.AnsweringModel != "answered-model" || rec.ConfiguredModel != DefaultJevSettings().Model || rec.Usage == nil || rec.Usage.InputTokens != 120 {
 				t.Fatalf("record %+v", rec)
 			}
 			for i, p := range tc.ps {
@@ -260,7 +260,7 @@ func TestJevFallbacksPreserveFindings(t *testing.T) {
 			p := &jevtest.Provider{Results: []jevtest.Result{{Err: &systemone.Error{Kind: tc.kind, Message: "provider detail " + jevTestKey}}}}
 			j := fakeJev(p)
 			if tc.name == "invalid settings" {
-				j.Config = func() jev.Settings { s := jev.DefaultSettings(); s.Enabled = true; s.Timeout = 0; return s }
+				j.Config = func() jev.Settings { s := DefaultJevSettings(); s.Enabled = true; s.Timeout = 0; return s }
 			}
 			if tc.name == "cooling down" {
 				j.Evaluate(context.Background(), systemone.Request{State: "warmup", Questions: map[string]systemone.Question{"q": systemone.Noul("question")}})
@@ -344,7 +344,7 @@ func TestJevShortensContextInOrderAndNeverFindings(t *testing.T) {
 	b.TouchedAreas[0].Summary = strings.Repeat("touch-", jevStateBytes)
 	b.Summary = strings.Repeat("summary-", 100)
 	findings := []Finding{{Title: "complete title", Body: "complete body", Suggestion: "replacement", Evidence: "evidence"}}
-	req, err := jevRequest(b, findings, "", nil, jev.DefaultModel)
+	req, err := jevRequest(b, findings, "", nil, DefaultJevSettings().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestJevShortensContextInOrderAndNeverFindings(t *testing.T) {
 	if !strings.Contains(state, "[shortened]") || !strings.Contains(state, b.Summary) || !strings.Contains(state, `"body":"complete body"`) {
 		t.Fatal("shortening lost higher priority context or finding")
 	}
-	body, err := req.Body(jev.DefaultModel)
+	body, err := req.Body(DefaultJevSettings().Model)
 	if err != nil || len(body) > jevRequestBytes || len(state) > jevStateBytes {
 		t.Fatal("budget not respected")
 	}
@@ -363,7 +363,7 @@ func TestJevShortensContextInOrderAndNeverFindings(t *testing.T) {
 	b.StyleRules = []Point{{Text: strings.Repeat("s", jevStateBytes)}}
 	rules := []Rule{{Text: strings.Repeat("n", jevStateBytes)}}
 	b.Excluded = []ExcludedFile{{Path: strings.Repeat("e", jevStateBytes)}}
-	req, err = jevRequest(b, findings, "", rules, jev.DefaultModel)
+	req, err = jevRequest(b, findings, "", rules, DefaultJevSettings().Model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,12 +430,12 @@ func (c *countingTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestJevDefaultProviderRefusesNetworkInTestBinary(t *testing.T) {
-	t.Setenv(jev.DefaultAPIKeyEnv, jevTestKey)
+	t.Setenv(DefaultJevSettings().APIKeyEnv, jevTestKey)
 	transport := &countingTransport{}
 	old := http.DefaultTransport
 	http.DefaultTransport = transport
 	t.Cleanup(func() { http.DefaultTransport = old })
-	j := NewJevJudge(jev.DefaultSettings())
+	j := NewJevJudge(DefaultJevSettings())
 	a, _ := runJevReview(t, j, &reviewAgent{})
 	if rec := readJev(t, a); rec.Reason != jev.ReasonRejected || !strings.Contains(rec.Detail, "test binary") {
 		t.Fatalf("guard: %+v", rec)
@@ -454,7 +454,8 @@ func TestJevConfigStrictKeysValuesAndDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Jev.Settings() != jev.DefaultSettings() {
+	want := jev.Settings{URL: "https://openrouter.ai/api", Model: "~typesafe/jev-latest", APIKeyEnv: "OPENROUTER_API_KEY", Timeout: 10 * time.Second}
+	if cfg.Jev.Settings() != want {
 		t.Fatalf("defaults %+v", cfg.Jev.Settings())
 	}
 	for _, tc := range []struct{ key, value string }{
@@ -524,7 +525,7 @@ func TestJevBlockedProviderTimesOutWithLiveReviewContext(t *testing.T) {
 	}}
 	j := fakeJev(p)
 	j.Config = func() jev.Settings {
-		s := jev.DefaultSettings()
+		s := DefaultJevSettings()
 		s.Enabled = true
 		s.Timeout = 5 * time.Millisecond
 		return s
@@ -551,7 +552,7 @@ func TestJevSuccessAfterReviewCancellationCannotBoost(t *testing.T) {
 func TestJevStateIncludesExcludedFilesButNotOtherBriefMetadata(t *testing.T) {
 	b := testBrief()
 	b.Excluded = []ExcludedFile{{Path: "generated.go", Added: 10, Removed: 8, Reason: "generated header"}}
-	req, err := jevRequest(b, []Finding{{Title: "A finding", Body: "Its body"}}, "", nil, jev.DefaultModel)
+	req, err := jevRequest(b, []Finding{{Title: "A finding", Body: "Its body"}}, "", nil, DefaultJevSettings().Model)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,13 +2,14 @@ package review
 
 import (
 	"strings"
+	"time"
 
 	"github.com/kpenfound/agentcore/jev"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
 // JevConfig is the global review file's [jev] table. Omitted keys take
-// agentcore's defaults; explicit empty values are invalid, even without a key.
+// busybees' defaults; explicit empty values are invalid, even without a key.
 type JevConfig struct {
 	URL       string          `toml:"url"`
 	Model     string          `toml:"model"`
@@ -17,8 +18,19 @@ type JevConfig struct {
 }
 
 func defaultJevConfig() JevConfig {
-	s := jev.DefaultSettings()
+	s := DefaultJevSettings()
 	return JevConfig{URL: s.URL, Model: s.Model, APIKeyEnv: s.APIKeyEnv, Timeout: config.Duration{Duration: s.Timeout}}
+}
+
+// DefaultJevSettings selects OpenRouter for standalone and factory reviews.
+// NewJevJudge enables evaluation when the API key is present.
+func DefaultJevSettings() jev.Settings {
+	return jev.Settings{
+		URL:       "https://openrouter.ai/api",
+		Model:     "~typesafe/jev-latest",
+		APIKeyEnv: "OPENROUTER_API_KEY",
+		Timeout:   10 * time.Second,
+	}
 }
 
 // Settings returns settings without credentials or an enabled switch.

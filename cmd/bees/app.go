@@ -25,9 +25,9 @@ import (
 )
 
 // factoryReviewJudge retains one Judge across every project and reload in this process.
-// It uses agentcore defaults, independently of the standalone review configuration.
+// It uses busybees defaults, independently of the standalone review configuration.
 var factoryReviewJudge = sync.OnceValue(func() *jev.Judge {
-	return review.NewJevJudge(jev.DefaultSettings())
+	return review.NewJevJudge(review.DefaultJevSettings())
 })
 
 // app wires the packages together for the scheduler commands.
