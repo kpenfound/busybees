@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/agentcore/agent"
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/skills"
@@ -32,13 +33,10 @@ func TestProviderEnvMatchesBackends(t *testing.T) {
 
 // A session's environment is its role's grants: the host's shell, toolchain,
 // provider and VCS variables, the role's own env, and nothing else.
-// fakeClaude only dumps what it was given; it does not confirm the real
+// The fixture records what it was given; it does not confirm the real
 // claude binary would run with this environment.
 func TestSessionEnvironmentIsTheRolesGrants(t *testing.T) {
-	bin := fakeClaude(t, `
-env > "$BEES_SESSION_DIR/env.txt"
-echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
-`)
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
 	t.Setenv("DELIVERY_WEBHOOK_SECRET", "delivery")
 	t.Setenv("OPENAI_API_KEY", "other-provider")
 	t.Setenv("ANTHROPIC_API_KEY", "own-provider")
@@ -46,15 +44,14 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	t.Setenv("GOFLAGS", "-mod=mod")
 	t.Setenv("PASSED_ON", "by-role")
 	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute, Env: map[string]string{"PASSED_ON": "$PASSED_ON"}}
-	res, err := newRunner(t, bin).Run(context.Background(), Request{Name: "t", Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir())})
+	_, err := newRunner(t, fixture.Bin).Run(context.Background(), Request{Name: "t", Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir())})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(res.SessionDir, "env.txt"))
-	if err != nil {
-		t.Fatal(err)
+	var env []string
+	for key, value := range fixture.Record(t).Sessions[0].Environment {
+		env = append(env, key+"="+value)
 	}
-	env := strings.Split(string(b), "\n")
 	for _, want := range []string{"ANTHROPIC_API_KEY=own-provider", "SSH_AUTH_SOCK=/agent.sock", "GOFLAGS=-mod=mod", "PASSED_ON=by-role"} {
 		if !slices.Contains(env, want) {
 			t.Errorf("missing %s", want)
@@ -99,7 +96,7 @@ func TestCodexDoesNotInheritGoogleCredentials(t *testing.T) {
 
 // A request its grants refuse leaves no session directory behind.
 func TestRefusedSessionLeavesNoDirectory(t *testing.T) {
-	r := newRunner(t, fakeClaude(t, `touch "$BEES_SESSION_DIR/ran"`))
+	r := newRunner(t, agenttest.Session(t, "claude", agenttest.Turn{}).Bin)
 	role := config.ResolvedRole{Name: "developer", Agent: agent.AgentCodex, Sandbox: config.SandboxNone}
 	profile := ProfileForRole(role)
 	profile.VCSAccess = false
@@ -169,7 +166,7 @@ func TestContainerGrantsCoverTheRunnersDirectories(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk")
 	base := t.TempDir()
 	work := t.TempDir()
-	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
+	r := newRunner(t, agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"}).Bin)
 	r.SessionsDir = filepath.Join(base, "sessions")
 	r.StateDir = t.TempDir()
 	r.Skills = &skills.Manager{CacheDir: filepath.Join(base, "cache")}
