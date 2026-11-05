@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/prompts"
@@ -287,7 +288,7 @@ func TestBestOfNAssemblerIsToldTheAttempts(t *testing.T) {
 // session reported, and the empty branches are deleted all the same.
 func TestBestOfNWithNothingToAssembleEscalates(t *testing.T) {
 	h := newHarness(t, bestOfNTOML)
-	t.Setenv("FAKE_ATTEMPT_FAIL", "all")
+	h.useSessions("claude", agenttest.Turn{ResultText: "ok", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: OutcomeFailed, Note: "attempt could not build"}})
 	seedSized(h, 1, "l")
 	runPass(t, h)
 	h.sched.wg.Wait()

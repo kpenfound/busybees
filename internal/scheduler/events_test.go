@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
@@ -458,9 +459,11 @@ func TestReviewActivityFailureAndCancellation(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "brief":
-				t.Setenv("FAKE_REVIEW_SIZE", "invalid")
+				h.useSessions("claude", reviewPipelineTurns("invalid")...)
 			case "angles":
-				t.Setenv("FAKE_ANGLE_FAIL", "all")
+				turns := reviewPipelineTurns("s")
+				turns = append(turns, agenttest.Turn{End: agenttest.TurnError, ExitCode: 1, ResultText: "the model is overloaded"})
+				h.useSessions("claude", turns...)
 				total = 2
 			case "cancelled":
 				cancel()
@@ -534,8 +537,8 @@ func TestReviewActivityIsRemovedWhenJudgePreparationFails(t *testing.T) {
 func TestReviewActivityCountsEnabledAngles(t *testing.T) {
 	for _, allDisabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("all-disabled=%v", allDisabled), func(t *testing.T) {
-			t.Setenv("FAKE_REVIEW_SIZE", "m")
 			h := newHarness(t, anglesReviewerTOML)
+			h.useSessions("claude", reviewPipelineTurns("m", "documentation accuracy")...)
 			pr := github.PR{Number: 42, BaseRefName: "main"}
 			h.gh.PRs[42] = &pr
 			switches, total := "[angles]\ngeneral = false\n", 1

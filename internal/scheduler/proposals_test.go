@@ -9,8 +9,6 @@ package scheduler
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -69,25 +67,12 @@ func section(t *testing.T, prompt, heading string) string {
 	return body
 }
 
-// pmPrompt returns the task prompt of the product manager's newest session.
-func pmPrompt(t *testing.T, h *harness) string {
-	t.Helper()
-	dirs := h.sessions(config.RoleProductManager)
-	if len(dirs) == 0 {
-		t.Fatal("no product manager session ran")
-	}
-	b, err := os.ReadFile(filepath.Join(dirs[len(dirs)-1], "prompt.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
-
 // A proposal is never presented for breakdown, but it is presented: it has
 // its own section, it stays in the feature table as waiting on a person, and
 // `bees status` counts it.
 func TestProposalIsPresentedButNeverForBreakdown(t *testing.T) {
 	h := newHarness(t, pmOnlyTOML)
+	h.useSessions("claude", doneTurn())
 	now := time.Now()
 	seedFeature(h, 5, "Exports", now.Add(-time.Hour))
 	seedFeature(h, 6, "Bee-written idea", now.Add(-time.Hour), "bees:proposal")
@@ -98,7 +83,7 @@ func TestProposalIsPresentedButNeverForBreakdown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prompt := pmPrompt(t, h)
+	prompt := lastPMPrompt(t, h)
 	breakdown := section(t, prompt, "## Feature issues needing you")
 	if strings.Contains(breakdown, "#6") {
 		t.Errorf("the proposal is presented for breakdown:\n%s", breakdown)
@@ -233,6 +218,7 @@ func TestABeeCommentOnAProposalDoesNotWakeTheProductManager(t *testing.T) {
 // the feature reaches the product manager on its next run.
 func TestApprovingAProposalIsNoticed(t *testing.T) {
 	h := newHarness(t, pmOnlyTOML)
+	h.useSessions("claude", doneTurn())
 	now := time.Now()
 	seedFeature(h, 6, "Bee-written idea", now.Add(-3*time.Hour), "bees:proposal")
 	// A bee comment newer than every human one: the feature is not "fresh"
@@ -277,7 +263,7 @@ func TestApprovingAProposalIsNoticed(t *testing.T) {
 		t.Error("the approval was not logged")
 	}
 	approved := is.ProposalApprovedAt
-	breakdown := section(t, pmPrompt(t, h), "## Feature issues needing you")
+	breakdown := section(t, lastPMPrompt(t, h), "## Feature issues needing you")
 	if !strings.Contains(breakdown, "#6: Bee-written idea") {
 		t.Errorf("the approved proposal did not reach the product manager:\n%s", breakdown)
 	}
@@ -300,6 +286,7 @@ func TestApprovingAProposalIsNoticed(t *testing.T) {
 // that lost the state dir) is an ordinary feature, not a fresh approval.
 func TestAFeatureFirstSeenApprovedApprovesNothing(t *testing.T) {
 	h := newHarness(t, pmOnlyTOML)
+	h.useSessions("claude", doneTurn())
 	seedFeature(h, 5, "Exports", time.Now().Add(-time.Hour))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -334,6 +321,7 @@ func TestTheProductManagerIsToldWhenTheProposalGateIsOff(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
 			h := newHarnessAt(t, tc.toml, now)
+			h.useSessions("claude", doneTurn())
 			seedFeature(h, 5, "Exports", now.Add(-time.Hour))
 			runPass(t, h)
 			if n := len(h.sessions(config.RoleProductManager)); n != 1 {
@@ -366,6 +354,7 @@ func TestTheProductManagerIsToldTheMinIssueSize(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
 			h := newHarnessAt(t, tc.toml, now)
+			h.useSessions("claude", doneTurn())
 			seedFeature(h, 5, "Exports", now.Add(-time.Hour))
 			runPass(t, h)
 			if n := len(h.sessions(config.RoleProductManager)); n != 1 {

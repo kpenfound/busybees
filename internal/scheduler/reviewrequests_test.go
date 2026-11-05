@@ -382,9 +382,8 @@ func TestARequestedReviewInFlightIsNotDispatchedTwice(t *testing.T) {
 func TestAFailedRequestedReviewStillRemovesTheLabel(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	// FAKE_REVIEW_FAIL scripts the session to fail outright; it says
-	// nothing about why a real model-driven session might fail.
-	t.Setenv("FAKE_REVIEW_FAIL", "1")
+	// The judge reports failure; no GitHub review is posted.
+	h.useSessions("claude", reviewTurns(OutcomeFailed, "cannot read the diff")...)
 	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	runPass(t, h)
 
@@ -803,10 +802,11 @@ func TestARequestedReviewWithoutTheReviewFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 			pushBranch(t, h.clone, "fix-widget")
-			t.Setenv("FAKE_REVIEW_NO_SUBMIT", "1")
+			status := OutcomeApproved
 			if changes {
-				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
+				status = OutcomeChangesRequested
 			}
+			h.useSessions("claude", reviewTurns(status, "one review submitted")...)
 			h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 			runPass(t, h)
 
@@ -834,7 +834,7 @@ func TestARequestedReviewWithoutTheReviewFails(t *testing.T) {
 func TestAReviewOlderThanTheSessionDoesNotConfirmIt(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	t.Setenv("FAKE_REVIEW_NO_SUBMIT", "1")
+	h.useSessions("claude", reviewTurns(OutcomeApproved, "one review submitted")...)
 	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	h.gh.Activity["repos/acme/widgets/pulls/42/reviews"] = `[{"id":1,"user":{"login":"kyle"},"body":"looks fine to me",` +
 		`"state":"APPROVED","submitted_at":"` + requestedReviewClock.Add(-time.Hour).Format(time.RFC3339) + `"}]`

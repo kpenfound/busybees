@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -329,8 +330,8 @@ func TestDailyBudgetDoesNotInterruptARunningWorker(t *testing.T) {
 // TestSessionOverItsBudgetIsTreatedAsFailed: a single over-budget session is
 // logged and fails, whatever it reported.
 func TestSessionOverItsBudgetIsTreatedAsFailed(t *testing.T) {
-	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+"max_cost_per_session = 0.5\nretries = 0\n"+devAndReviewerTOML)
+	h.useSessions("claude", agenttest.Turn{ResultText: "ok", NumTurns: 2, CostUSD: 1, Outcome: &agenttest.SessionOutcome{Status: OutcomePROpened, Work: ghwork.New(0, fakePR)}})
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
@@ -358,8 +359,8 @@ func TestSessionOverItsBudgetIsTreatedAsFailed(t *testing.T) {
 // retried (with the fallback model), and only the second one gives up — and
 // says that the role's limits, not the work, are the problem.
 func TestTwoOverBudgetSessionsInARowEscalate(t *testing.T) {
-	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+"max_cost_per_session = 0.5\nretries = 1\nretry_delay = \"0s\"\n"+devAndReviewerTOML)
+	h.useSessions("claude", agenttest.Turn{ResultText: "ok", NumTurns: 2, CostUSD: 1, Outcome: &agenttest.SessionOutcome{Status: OutcomePROpened, Work: ghwork.New(0, fakePR)}})
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",

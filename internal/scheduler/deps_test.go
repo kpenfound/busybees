@@ -196,6 +196,7 @@ func TestInvisibleBlockerDoesNotHold(t *testing.T) {
 // The project manager's prompt shows the open blockers of every work item.
 func TestProjectManagerSeesBlockers(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n")
+	h.useSessions("claude", doneTurn())
 	h.sched.OnlyRoles = map[string]bool{config.RoleProjectManager: true}
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Needs triage", Body: "Blocked by #2\n\nvague", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}

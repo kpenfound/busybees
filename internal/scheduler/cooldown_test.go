@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
@@ -16,7 +17,8 @@ import (
 
 // startHeldSession seeds one ready issue, starts the real loop and waits for
 // the developer session on it to reach the point cond names. The session is
-// held on FAKE_WAIT_FOR (the file at the returned release path), so it
+// held on FAKE_WAIT_FOR (the file at the returned release path), or on
+// the caller's never-ending Session turn, so it
 // cannot finish before the test decides what happens to it — cancelling the
 // loop is racing nothing. It returns the session directory, the release
 // path, the loop's cancel and the channel Run's error arrives on.
@@ -30,7 +32,9 @@ func startHeldSession(t *testing.T, h *harness, cond func(dir string) bool, what
 		h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
 	}
 	release = filepath.Join(t.TempDir(), "release")
-	t.Setenv("FAKE_WAIT_FOR", release)
+	if h.fixture == nil {
+		t.Setenv("FAKE_WAIT_FOR", release)
+	}
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
 
 	h.sched.Once = false
@@ -123,7 +127,8 @@ func TestCancellingTheLoopLetsTheRunningSessionFinish(t *testing.T) {
 // resumes the work through the ordinary crash-recovery path.
 func TestHardStopKillsTheRunningSession(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
-	// The release file is never created: only the hard stop ends the session.
+	h.useSessions("claude", agenttest.Turn{End: agenttest.TurnNeverEnds})
+	// Only the hard stop ends the scripted session.
 	dir, _, cancel, done := startHeldSession(t, h, func(dir string) bool {
 		_, err := os.Stat(filepath.Join(dir, procs.PIDFile))
 		return err == nil
@@ -227,8 +232,9 @@ func TestACooldownCarriesTheWorkerIntoItsReview(t *testing.T) {
 // have followed it does not run.
 func TestAHardStopEndsTheWorkerBeforeItsReview(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
+	h.useSessions("claude", agenttest.Turn{End: agenttest.TurnNeverEnds})
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
-	// The release file is never created: only the hard stop ends the session.
+	// Only the hard stop ends the scripted session.
 	_, _, cancel, done := startHeldSession(t, h, func(dir string) bool {
 		_, err := os.Stat(filepath.Join(dir, procs.PIDFile))
 		return err == nil
