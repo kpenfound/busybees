@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/jev"
 	"github.com/kpenfound/agentcore/jev/jevtest"
 	"github.com/kpenfound/agentcore/jev/systemone"
@@ -35,13 +36,13 @@ const jevPipelineAnswer = `{"summary":"Updates widgets","size":"s","findings":[
 func jevPipelineAgent(t *testing.T) {
 	t.Helper()
 	originalPath := os.Getenv("PATH")
-	fakeClaude(t, jevPipelineAnswer)
-	bin := os.Getenv("PATH")
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: jevPipelineAnswer, SessionID: "sess-triage"})
+	bin := fixture.Dir
 	// Checkout acquisition is deliberately unavailable; never use host docker.
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("BEES_CLAUDE_BIN", filepath.Join(bin, "claude"))
+	t.Setenv("BEES_CLAUDE_BIN", fixture.Bin)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+originalPath)
 }
 

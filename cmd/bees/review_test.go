@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/review"
 )
 
@@ -595,33 +595,11 @@ func TestReviewTriageAsksHowToEndAndPostsThroughGh(t *testing.T) {
 	}
 }
 
-// fakeClaude puts a claude, and nothing else, on the PATH: it answers every
-// session with answer, and records the prompt it was given and the
-// directory it ran in under the returned path, as .stdin and .dir.
-func fakeClaude(t *testing.T, answer string) string {
-	t.Helper()
-	bin, scratch := t.TempDir(), t.TempDir()
-	record := filepath.Join(scratch, "record")
-	result, err := json.Marshal(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": answer, "session_id": "sess-triage", "num_turns": 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(scratch, "result.json")
-	if err := os.WriteFile(out, result, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\n/bin/cat > " + record + ".stdin\npwd -P > " + record + ".dir\n/bin/cat " + out + "\n"
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin)
-	return record
-}
-
 func TestReviewTriageWithAnAgentTakesItsDecisionsAndItsEnd(t *testing.T) {
 	home := reviewHome(t)
 	dir := storedReview(t, home)
-	record := fakeClaude(t, `{"decisions": [{"finding": "aaaa0001", "action": "select"}, {"finding": "aaaa0002", "action": "dismiss", "reason": "doc comments are optional here"}], "end": "report"}`)
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{SessionID: "sess-triage", ResultText: `{"decisions": [{"finding": "aaaa0001", "action": "select"}, {"finding": "aaaa0002", "action": "dismiss", "reason": "doc comments are optional here"}], "end": "report"}`})
+	t.Setenv("PATH", fixture.Dir)
 	stdout, _, err := runReviewWith(t, "", "triage", "acme/widgets#7", "--agent", "--instructions", "Only what a user would notice.")
 	if err != nil {
 		t.Fatal(err)
@@ -640,24 +618,22 @@ func TestReviewTriageWithAnAgentTakesItsDecisionsAndItsEnd(t *testing.T) {
 	if strings.Contains(stdout, "s select ·") || strings.Contains(stdout, "selected. a approve") {
 		t.Errorf("the console asked a person:\n%s", stdout)
 	}
-	prompt, err := os.ReadFile(record + ".stdin")
-	if err != nil {
-		t.Fatal(err)
+	record := fixture.Record(t)
+	if len(record.Sessions) != 1 {
+		t.Fatalf("sessions: %+v", record.Sessions)
 	}
-	if !strings.Contains(string(prompt), "Only what a user would notice.") || !strings.Contains(string(prompt), "### aaaa0001 · medium · general · naming") {
+	prompt := record.Sessions[0].Prompt
+	if !strings.Contains(prompt, "Only what a user would notice.") || !strings.Contains(prompt, "### aaaa0001 · medium · general · naming") {
 		t.Errorf("the agent was not told the instructions and the findings:\n%s", prompt)
 	}
 	// Outside a checkout of acme/widgets the session runs in the review's
 	// scratch directory.
-	ran, err := os.ReadFile(record + ".dir")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ran := record.Sessions[0].WorkingDirectory
 	scratch, err := filepath.EvalSymlinks(filepath.Join(dir, review.ScratchDir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(ran)) != scratch {
+	if ran != scratch {
 		t.Errorf("the session ran in %s, want %s", ran, scratch)
 	}
 	notes, err := os.ReadFile(filepath.Join(home, review.DefaultNotesPath))
@@ -669,7 +645,8 @@ func TestReviewTriageWithAnAgentTakesItsDecisionsAndItsEnd(t *testing.T) {
 func TestReviewTriageWithAnAgentEndsAsTheFlagSays(t *testing.T) {
 	home := reviewHome(t)
 	storedReview(t, home)
-	record := fakeClaude(t, `{"decisions": [{"finding": "aaaa0001", "action": "select"}, {"finding": "aaaa0002", "action": "defer"}], "end": "discard"}`)
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{SessionID: "sess-triage", ResultText: `{"decisions": [{"finding": "aaaa0001", "action": "select"}, {"finding": "aaaa0002", "action": "defer"}], "end": "discard"}`})
+	t.Setenv("PATH", fixture.Dir)
 	stdout, _, err := runReviewWith(t, "", "triage", "acme/widgets#7", "--agent", "--report")
 	if err != nil {
 		t.Fatal(err)
@@ -677,11 +654,12 @@ func TestReviewTriageWithAnAgentEndsAsTheFlagSays(t *testing.T) {
 	if !strings.Contains(stdout, "# Review of acme/widgets#7\n") || !strings.Contains(stdout, "The receiver is named after its type") || strings.Contains(stdout, "the agent chose") {
 		t.Errorf("--report did not end the review, or the agent chose:\n%s", stdout)
 	}
-	prompt, err := os.ReadFile(record + ".stdin")
-	if err != nil {
-		t.Fatal(err)
+	record := fixture.Record(t)
+	if len(record.Sessions) != 1 {
+		t.Fatalf("sessions: %+v", record.Sessions)
 	}
-	if !strings.Contains(string(prompt), "Whoever runs this review chose how it ends: `report`") {
+	prompt := record.Sessions[0].Prompt
+	if !strings.Contains(prompt, "Whoever runs this review chose how it ends: `report`") {
 		t.Errorf("the agent was not told the end:\n%s", prompt)
 	}
 	// An end that posts goes through gh, which is not on the PATH.

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/fakegh"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -64,13 +65,18 @@ func answerFiles() map[string]string {
 	}
 }
 
-// testRunner runs the fake agent in TestMain as claude, and this test
-// binary as bees, so the shim's gh is served by TestMain too.
-func testRunner(t *testing.T) (*Runner, *bytes.Buffer) {
+// testRunner uses scripted turns when supplied, otherwise TestMain's role
+// fake. The bees binary is this test binary, so TestMain also serves gh.
+func testRunner(t *testing.T, turns ...agenttest.Turn) (*Runner, *bytes.Buffer) {
 	t.Helper()
-	t.Setenv("FAKE_CLAUDE", "1")
+	bin := os.Args[0]
+	if len(turns) > 0 {
+		bin = agenttest.Session(t, "claude", turns...).Bin
+	} else {
+		t.Setenv("FAKE_CLAUDE", "1")
+	}
 	var console bytes.Buffer
-	return &Runner{Bees: os.Args[0], ClaudeBin: os.Args[0], CodexBin: os.Args[0], OpenCodeBin: os.Args[0], PiBin: os.Args[0],
+	return &Runner{Bees: os.Args[0], ClaudeBin: bin, CodexBin: os.Args[0], OpenCodeBin: os.Args[0], PiBin: os.Args[0],
 		PassInterval: "100ms", Console: &console}, &console
 }
 
@@ -83,14 +89,14 @@ func builtIn(t *testing.T) Selection {
 	return sel
 }
 
-func runOne(t *testing.T, caseTOML string, files map[string]string) (*Report, CaseResult) {
+func runOne(t *testing.T, caseTOML string, files map[string]string, turns ...agenttest.Turn) (*Report, CaseResult) {
 	t.Helper()
 	root := t.TempDir()
 	c, err := LoadCase(writeCase(t, root, "answer", caseTOML, files))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, console := testRunner(t)
+	r, console := testRunner(t, turns...)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	rep, err := r.Run(ctx, []Case{c}, builtIn(t), filepath.Join(root, "out"))
@@ -211,8 +217,7 @@ func TestRunRefusesACaseWhoseTestAlreadyPasses(t *testing.T) {
 }
 
 func TestRunStopsAtTheBudget(t *testing.T) {
-	t.Setenv("FAKE_COST", "5")
-	_, res := runOne(t, answerCase, answerFiles())
+	_, res := runOne(t, answerCase, answerFiles(), agenttest.Turn{ResultText: "ok", SessionID: "sid", NumTurns: 2, CostUSD: 5, Outcome: &agenttest.SessionOutcome{Status: "pr-opened", Work: ghwork.New(1, 2)}})
 	if res.Pass || res.Stop != StopBudget || res.CostUSD < 3 {
 		t.Fatalf("result: %+v", res)
 	}
@@ -237,9 +242,8 @@ func TestRunStopsAtTheBudgetWhileASessionRuns(t *testing.T) {
 }
 
 func TestRunStopsAtTheTimeout(t *testing.T) {
-	t.Setenv("FAKE_DEV_HANG", "60")
 	start := time.Now()
-	_, res := runOne(t, strings.Replace(answerCase, `timeout = "2m"`, `timeout = "3s"`, 1), answerFiles())
+	_, res := runOne(t, strings.Replace(answerCase, `timeout = "2m"`, `timeout = "3s"`, 1), answerFiles(), agenttest.Turn{End: agenttest.TurnNeverEnds})
 	if res.Pass || res.Stop != StopTimeout {
 		t.Fatalf("result: %+v", res)
 	}
@@ -251,8 +255,7 @@ func TestRunStopsAtTheTimeout(t *testing.T) {
 // An issue the factory gives up on is held for a person: nothing is left
 // to wait for, and the case fails on it.
 func TestRunStopsWhenTheFactoryGivesUp(t *testing.T) {
-	t.Setenv("FAKE_DEV_FAIL", "1")
-	_, res := runOne(t, answerCase, answerFiles())
+	_, res := runOne(t, answerCase, answerFiles(), agenttest.Turn{ResultText: "ok", SessionID: "sid", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: "failed", Note: "cannot build"}})
 	if res.Pass || res.Stop != StopDone {
 		t.Fatalf("result: %+v", res)
 	}
@@ -326,7 +329,6 @@ issue = 3
 // way GitHub marks it, which is what sends it back to the developer: the
 // next pass mails them and moves the issue out of approved.
 func TestMergeApprovedLeavesAConflictToTheDeveloper(t *testing.T) {
-	t.Setenv("FAKE_DEV_FAIL", "1")
 	root := t.TempDir()
 	c, err := LoadCase(writeCase(t, root, "conflict", answerCase, answerFiles()))
 	if err != nil {
@@ -360,7 +362,7 @@ func TestMergeApprovedLeavesAConflictToTheDeveloper(t *testing.T) {
 	commit("changed on main\n", "main")
 	mainBefore, _ := git(ctx, fx.origin, "rev-parse", "main")
 
-	r, _ := testRunner(t)
+	r, _ := testRunner(t, agenttest.Turn{ResultText: "ok", SessionID: "sid", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: "failed", Note: "cannot build"}})
 	f, err := r.factory(ctx, c, builtIn(t), dir, fx)
 	if err != nil {
 		t.Fatal(err)

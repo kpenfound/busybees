@@ -89,20 +89,32 @@ the checks, and `dagger check go:test-all` runs one of them.
   `pr create/list/view/diff/comment/merge/checks`, with a queue of scripted
   check results; the `api` calls for milestones, issue details, the parent
   lookup and human PR activity) and records label history, comments and
-  merges for assertions. `claude` is faked by the test binary itself:
-  `TestMain` in `internal/scheduler/scheduler_test.go` checks
-  `FAKE_CLAUDE=1` (not `BEES_FAKE_CLAUDE`: the runner strips every
-  inherited `BEES_*` variable, so a flag in that namespace would never reach
-  the fake) and, when set, runs a scripted role (a developer commits, pushes
-  and reports `pr-opened`; a reviewer mails feedback once, then approves;
-  the singletons report `done`), writes `outcome.json` and prints a
-  stream-json `result` line; `Runner.ClaudeBin` is set to `os.Args[0]`. The
-  session tests fake `claude` with a shell script the same way. Those two
-  are the only executables a test binary may run as an agent: before a
-  session starts, agentcore's `agent/agentbin.Resolve` refuses any other one when
-  `testing.Testing()` reports a `go test` build, whether the binary is
-  running its tests or was started again as a command of its own (a test of
-  `bees run` that executes the real command, say). A test that forgets its
+  merges for assertions.
+- Use `agenttest.Session(t, backend, turns...)` from
+  `github.com/kpenfound/agentcore/agent/agenttest` to fake a `claude` or
+  `codex` session. Point the runner's backend binary at the fixture's `Bin`,
+  or put its `Dir` on PATH when testing CLI discovery. Each `agenttest.Turn`
+  scripts a result, session id, turn count, cost, ending, outcome or workspace
+  files. Each session claims the next turn and the last repeats; automatic
+  probes consume no turn. `fixture.Record(t)` separates sessions from probes
+  and supplies arguments, environment, working directory, prompt, resume id
+  and Codex request methods. The fixture needs no `TestMain`, `FAKE_*`
+  environment variable or extra grant.
+- Keep scripts for sessions that perform role work or exercise details the
+  fixture cannot express. `TestMain` in `internal/scheduler/scheduler_test.go`
+  and `internal/eval/main_test.go` runs scripted roles against fake GitHub:
+  developers commit and push, reviewers post reviews and mail feedback, and
+  managers and QA act on issues and mail. The eval fake also answers brief
+  and angle prompts. Those tests set `FAKE_CLAUDE=1` and point the runner at
+  `os.Args[0]`; the runner strips inherited `BEES_*` variables, so the flag
+  cannot live in that namespace. Tests of these fakes keep their own protocol
+  conversations. Scripts also remain for `opencode` and `pi`, credential/gh
+  execution, malformed or incomplete protocols, custom probes and Codex
+  thread parameters that `Record` does not expose.
+  Before a session starts, agentcore's `agent/agentbin.Resolve` refuses an
+  executable it does not recognize as a test fake when `testing.Testing()`
+  reports a `go test` build, whether the binary is running its tests or was
+  started again as a command of its own. A test that forgets its
   fake fails with `ErrRealAgent` naming the executable it found on PATH; it
   never runs the real `claude` on the machine the suite runs on. Git is real:
   tests create a bare origin and a clone with one commit with
