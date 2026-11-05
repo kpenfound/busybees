@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -184,15 +185,15 @@ fallback = "light"
 [profiles.light]
 model = "sonnet"
 `)
-	bin, record := fakeCLI(t, claudeAnswer)
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
 	angles := NewAngles(cfg, t.TempDir())
 	angles.Checkout = nil
-	angles.Agents[AngleDocs].ClaudeBin = bin
+	angles.Agents[AngleDocs].ClaudeBin = fixture.Bin
 	runs, err := angles.Run(context.Background(), t.TempDir(), onlyAngle(t, AngleDocs), testBrief(), testDiff)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := args(t, record)
+	got := sessionArgs(lastSession(t, fixture))
 	for _, want := range []string{"\n--model\nopus\n", "\n--effort\nhigh\n", "\n--fallback-model\nsonnet\n", "\n--permission-prompts\nnone\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the docs session was not run with %q:\n%s", strings.TrimSpace(want), got)
@@ -204,7 +205,7 @@ model = "sonnet"
 	if _, err := angles.Resume(context.Background(), runs[0], "why?"); err != nil {
 		t.Fatalf("resume on the profile's agent: %v", err)
 	}
-	if got := args(t, record); !strings.Contains(got, "\n--resume\nsess-1\n") {
+	if got := sessionArgs(lastSession(t, fixture)); !strings.Contains(got, "\n--resume\nsess-1\n") {
 		t.Errorf("the docs session was not resumed:\n%s", got)
 	}
 }

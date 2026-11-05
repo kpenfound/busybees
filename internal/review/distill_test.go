@@ -11,7 +11,7 @@ import (
 // fakeAgent stands in for the coding agent: it records the session it was
 // asked to run and answers with what the test gave it. It leaves unverified
 // whether a real CLI agent would honor the read-only restriction or accept
-// the prompt and flags it is given; fakeCLI (agent_test.go), which runs a
+// the prompt and flags it is given; agenttest.Session (agent_test.go), which runs a
 // real subprocess, is what tests that boundary.
 type fakeAgent struct {
 	answer string

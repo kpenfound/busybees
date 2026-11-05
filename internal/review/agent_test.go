@@ -235,6 +235,28 @@ func envOf(t *testing.T, record string) string {
 	return "\n" + recorded(t, record, "env")
 }
 
+func lastSession(t *testing.T, fixture *agenttest.SessionFixture) agenttest.SessionInvocation {
+	t.Helper()
+	record := fixture.Record(t)
+	if len(record.Sessions) == 0 {
+		t.Fatal("no session recorded")
+	}
+	return record.Sessions[len(record.Sessions)-1]
+}
+
+func sessionArgs(inv agenttest.SessionInvocation) string {
+	return "\n" + strings.Join(inv.Args, "\n") + "\n"
+}
+
+func sessionEnv(inv agenttest.SessionInvocation) string {
+	var env strings.Builder
+	env.WriteByte('\n')
+	for key, value := range inv.Environment {
+		env.WriteString(key + "=" + value + "\n")
+	}
+	return env.String()
+}
+
 // codexThreadStart reads the lines a fakeCodex recorded and returns the
 // params of the thread/start or thread/resume request among them — the
 // protocol's own record of the sandbox, the model and the rest of what
@@ -310,25 +332,13 @@ func allProviderBins(bin string) *CLIAgent {
 	return &CLIAgent{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, PiBin: bin}
 }
 
-// fakeProvider is the fake for name's own session: codex through fakeCodex,
-// whose body (tc.answer, from sessionsByAgent) is the shell snippet run
-// once its app-server fake answers turn/start; every other backend
-// through fakeCLI, whose body just prints the answer the agent gives.
-func fakeProvider(t *testing.T, name, answer string) (bin, record string) {
-	t.Helper()
-	if name == config.AgentCodex {
-		return fakeCodex(t, answer)
-	}
-	return fakeCLI(t, answer)
-}
-
 func TestAClaudeReviewSessionIsReadOnly(t *testing.T) {
-	bin, record := fakeCLI(t, claudeAnswer)
-	agent := &CLIAgent{ClaudeBin: bin, Model: "opus"}
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
+	agent := &CLIAgent{ClaudeBin: fixture.Bin, Model: "opus"}
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	got := args(t, record)
+	got := sessionArgs(lastSession(t, fixture))
 	for _, want := range []string{
 		"\n--disallowedTools\nBash,BashOutput,Edit,KillShell,MultiEdit,NotebookEdit,Task,WebFetch,WebSearch,Write\n",
 		"\n--allowedTools\nRead,Grep,Glob,LS,NotebookRead\n",
@@ -353,7 +363,7 @@ func TestAClaudeReviewSessionIsReadOnly(t *testing.T) {
 	if servers := mcpServers(t, got); len(servers) != 0 {
 		t.Errorf("a review session was given MCP servers: %v", servers)
 	}
-	if prompt := recorded(t, record, "stdin"); prompt != "do it" {
+	if prompt := lastSession(t, fixture).Prompt; prompt != "do it" {
 		t.Errorf("prompt = %q, want it on stdin", prompt)
 	}
 }
@@ -382,13 +392,13 @@ func mcpServers(t *testing.T, argv string) []string {
 }
 
 func TestASessionRunsInTheDirectoryItWasGiven(t *testing.T) {
-	bin, record := fakeCLI(t, claudeAnswer)
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
 	dir := t.TempDir()
-	agent := &CLIAgent{ClaudeBin: bin}
+	agent := &CLIAgent{ClaudeBin: fixture.Bin}
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: dir}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := filepath.EvalSymlinks(strings.TrimSpace(recorded(t, record, "dir")))
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(lastSession(t, fixture).WorkingDirectory))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +414,13 @@ func TestASessionRunsInTheDirectoryItWasGiven(t *testing.T) {
 func TestEveryProviderAnswersThroughTheAdapter(t *testing.T) {
 	for name, tc := range sessionsByAgent() {
 		t.Run(name, func(t *testing.T) {
-			bin, _ := fakeProvider(t, name, tc.answer)
+			var bin string
+			if name == config.AgentClaude || name == config.AgentCodex {
+				fixture := agenttest.Session(t, name, agenttest.Turn{ResultText: "the brief", SessionID: tc.id, NumTurns: tc.turns, CostUSD: tc.cost})
+				bin = fixture.Bin
+			} else {
+				bin, _ = fakeCLI(t, tc.answer)
+			}
 			agent := allProviderBins(bin)
 			agent.Provider = name
 			res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
@@ -422,13 +438,22 @@ func TestEveryProviderAnswersThroughTheAdapter(t *testing.T) {
 }
 
 func TestAFailedClaudeSessionIsAnError(t *testing.T) {
-	for _, tc := range []struct{ name, answer, want string }{
-		{"with a subtype", `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"gave up"}`, "error_max_turns: gave up"},
-		{"without one", `{"type":"result","is_error":true,"result":"gave up"}`, "failed: gave up"},
-		{"without a word about it", `{"type":"result","subtype":"error_max_turns","is_error":true}`, "session: error_max_turns"},
+	for _, tc := range []struct {
+		name, text, subtype, want string
+	}{
+		{"with a subtype", "gave up", "error_max_turns", "error_max_turns: gave up"},
+		{"without one", "gave up", "", "failed: gave up"},
+		{"without a word about it", "", "error_max_turns", "session: error_max_turns"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin, _ := fakeCLI(t, "echo '"+tc.answer+"'")
+			var bin string
+			if tc.subtype == "" {
+				// Session supplies an error subtype; this case checks its absence.
+				bin, _ = fakeCLI(t, `echo '{"type":"result","is_error":true,"result":"gave up"}'`)
+			} else {
+				fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{End: agenttest.TurnError, ErrorSubtype: tc.subtype, ResultText: tc.text})
+				bin = fixture.Bin
+			}
 			agent := &CLIAgent{ClaudeBin: bin}
 			_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
 			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
@@ -453,8 +478,8 @@ func TestASessionThatPrintedNoResultIsAnError(t *testing.T) {
 func TestASessionThatFailedWithAResultReportsTheResult(t *testing.T) {
 	// The exit code is not what says a session failed: claude reports the
 	// failure in its result event and can still exit 0.
-	bin, _ := fakeCLI(t, `echo '{"type":"result","is_error":true,"subtype":"error_during_execution","result":"no capacity"}'`)
-	agent := &CLIAgent{ClaudeBin: bin}
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{End: agenttest.TurnError, ErrorSubtype: "error_during_execution", ResultText: "no capacity"})
+	agent := &CLIAgent{ClaudeBin: fixture.Bin}
 	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "no capacity") {
 		t.Fatalf("err = %v, want what the session said", err)
@@ -462,18 +487,18 @@ func TestASessionThatFailedWithAResultReportsTheResult(t *testing.T) {
 }
 
 func TestAClaudeSessionIsResumedByItsID(t *testing.T) {
-	bin, record := fakeCLI(t, claudeAnswer)
-	agent := &CLIAgent{ClaudeBin: bin}
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
+	agent := &CLIAgent{ClaudeBin: fixture.Bin}
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "angle", Dir: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	if got := args(t, record); strings.Contains(got, "--resume") {
+	if got := sessionArgs(lastSession(t, fixture)); strings.Contains(got, "--resume") {
 		t.Errorf("a fresh session was resumed:\n%s", got)
 	}
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "angle", Dir: t.TempDir(), ResumeID: "sess-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := args(t, record); !strings.Contains(got, "\n--resume\nsess-1\n") {
+	if got := sessionArgs(lastSession(t, fixture)); !strings.Contains(got, "\n--resume\nsess-1\n") {
 		t.Errorf("session not resumed:\n%s", got)
 	}
 }
@@ -481,7 +506,18 @@ func TestAClaudeSessionIsResumedByItsID(t *testing.T) {
 func TestAModelTheConfigurationLeavesOutIsTheAgentsOwn(t *testing.T) {
 	for name, tc := range sessionsByAgent() {
 		t.Run(name, func(t *testing.T) {
-			bin, record := fakeProvider(t, name, tc.answer)
+			var bin, record string
+			var fixture *agenttest.SessionFixture
+			switch name {
+			case config.AgentClaude:
+				fixture = agenttest.Session(t, name, agenttest.Turn{ResultText: "the brief", SessionID: tc.id, NumTurns: tc.turns, CostUSD: tc.cost})
+				bin = fixture.Bin
+			case config.AgentCodex:
+				// Record does not expose thread/start's model or sandbox.
+				bin, record = fakeCodex(t, tc.answer)
+			default:
+				bin, record = fakeCLI(t, tc.answer)
+			}
 			agent := allProviderBins(bin)
 			agent.Provider = name
 			if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()}); err != nil {
@@ -496,7 +532,13 @@ func TestAModelTheConfigurationLeavesOutIsTheAgentsOwn(t *testing.T) {
 				}
 				return
 			}
-			if got := args(t, record); strings.Contains(got, "--model") {
+			var got string
+			if fixture != nil {
+				got = sessionArgs(lastSession(t, fixture))
+			} else {
+				got = args(t, record)
+			}
+			if strings.Contains(got, "--model") {
 				t.Errorf("a model was chosen:\n%s", got)
 			}
 		})
@@ -552,7 +594,15 @@ func TestAFailedCodexTurnIsAnError(t *testing.T) {
 		{"an error", `{"method":"error","params":{"message":"no capacity"}}`, "error: no capacity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin, _ := fakeCodex(t, "echo '"+tc.event+"'")
+			var bin string
+			if tc.name == "a failed turn" {
+				// Session's failed turn also sends an error notification. Keep
+				// this status-only failure to check the default error message.
+				bin, _ = fakeCodex(t, "echo '"+tc.event+"'")
+			} else {
+				fixture := agenttest.Session(t, config.AgentCodex, agenttest.Turn{End: agenttest.TurnFailed, ResultText: "no capacity", SessionID: "thread-9"})
+				bin = fixture.Bin
+			}
 			agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
 			_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
 			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
@@ -713,8 +763,8 @@ func TestAFallbackChainThatNeverEndsIsRefused(t *testing.T) {
 }
 
 func TestASessionIsBoundedByItsTimeout(t *testing.T) {
-	bin, _ := fakeCLI(t, "sleep 5")
-	agent := &CLIAgent{ClaudeBin: bin, Timeout: 50 * time.Millisecond}
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{End: agenttest.TurnNeverEnds})
+	agent := &CLIAgent{ClaudeBin: fixture.Bin, Timeout: 50 * time.Millisecond}
 	start := time.Now()
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()}); err == nil {
 		t.Fatal("a session that ran past its timeout succeeded")
@@ -741,8 +791,8 @@ func TestTheAgentIsTheConfiguredProviderAndModel(t *testing.T) {
 // role's own variables from bees.toml when the factory runs the review.
 func TestTheSessionIsGivenTheAgentsEnvironment(t *testing.T) {
 	t.Setenv("REVIEW_TEST_INHERITED", "from the caller")
-	bin, record := fakeCLI(t, claudeAnswer)
-	agent := &CLIAgent{ClaudeBin: bin, Env: map[string]string{
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
+	agent := &CLIAgent{ClaudeBin: fixture.Bin, Env: map[string]string{
 		"REVIEW_TEST_ROLE":      "from the role",
 		"REVIEW_TEST_INHERITED": "from the role too",
 		"REVIEW_TEST_EXPANDED":  "$REVIEW_TEST_INHERITED and more",
@@ -750,7 +800,7 @@ func TestTheSessionIsGivenTheAgentsEnvironment(t *testing.T) {
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	env := envOf(t, record)
+	env := sessionEnv(lastSession(t, fixture))
 	if !strings.Contains(env, "\nREVIEW_TEST_ROLE=from the role\n") {
 		t.Errorf("the role's variable did not reach the session:\n%s", env)
 	}
@@ -779,12 +829,12 @@ func TestTheSessionIsNotGivenFactoryOrVCSVariables(t *testing.T) {
 	t.Setenv("BEES_SESSION_DIR", "/session")
 	t.Setenv("GIT_DIR", "/shared")
 	t.Setenv("REVIEW_TEST_KEPT", "yes")
-	bin, record := fakeCLI(t, claudeAnswer)
-	agent := &CLIAgent{ClaudeBin: bin, Env: map[string]string{"BEES_REPO": "secret", "GIT_WORK_TREE": "/repo", "REVIEW_TEST_ROLE": "ok"}}
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
+	agent := &CLIAgent{ClaudeBin: fixture.Bin, Env: map[string]string{"BEES_REPO": "secret", "GIT_WORK_TREE": "/repo", "REVIEW_TEST_ROLE": "ok"}}
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	env := envOf(t, record)
+	env := sessionEnv(lastSession(t, fixture))
 	for _, leak := range []string{"BEES_ROLE", "BEES_SESSION_DIR", "BEES_REPO", "GIT_DIR", "GIT_WORK_TREE"} {
 		if strings.Contains(env, leak+"=") {
 			t.Errorf("%s leaked into the session:\n%s", leak, env)
@@ -798,14 +848,30 @@ func TestTheSessionIsNotGivenFactoryOrVCSVariables(t *testing.T) {
 func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 	for name, tc := range sessionsByAgent() {
 		t.Run(name, func(t *testing.T) {
-			bin, record := fakeProvider(t, name, tc.answer)
+			var bin, record string
+			var fixture *agenttest.SessionFixture
+			switch name {
+			case config.AgentClaude:
+				fixture = agenttest.Session(t, name, agenttest.Turn{ResultText: "the brief", SessionID: tc.id, NumTurns: tc.turns, CostUSD: tc.cost})
+				bin = fixture.Bin
+			case config.AgentCodex:
+				// Record does not expose thread/start's model or sandbox.
+				bin, record = fakeCodex(t, tc.answer)
+			default:
+				bin, record = fakeCLI(t, tc.answer)
+			}
 			a := allProviderBins(bin)
 			a.Provider, a.Model, a.Effort = name, "chosen", "max"
 			a.Fallback = &CLIAgent{Provider: config.AgentClaude, Model: "fallback"}
 			if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err != nil {
 				t.Fatal(err)
 			}
-			got := args(t, record)
+			var got string
+			if fixture != nil {
+				got = sessionArgs(lastSession(t, fixture))
+			} else {
+				got = args(t, record)
+			}
 			var wants []string
 			if name != config.AgentCodex {
 				wants = append(wants, "\n--model\nchosen\n")
@@ -947,10 +1013,10 @@ func TestCodexReviewMCPInventoryFailsClosed(t *testing.T) {
 // recorded under the agent and model that answered. Any other failure is
 // the session's own, and the fallback never runs.
 func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
-	limited, limitedRecord := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
+	limited := agenttest.Session(t, config.AgentClaude, agenttest.Turn{End: agenttest.TurnError, ResultText: "Rate limit reached for opus", SessionID: "sess-0"})
 	overloaded, overloadedRecord := fakeCodex(t, `echo '{"method":"error","params":{"message":"the model is overloaded"}}'`)
 	answering, answeringRecord := fakeCLI(t, openCodeAnswer)
-	a := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{
+	a := &CLIAgent{ClaudeBin: limited.Bin, Model: "opus", Fallback: &CLIAgent{
 		Provider: config.AgentCodex, CodexBin: overloaded, Model: "gpt-first", Fallback: &CLIAgent{
 			Provider: config.AgentOpenCode, OpenCodeBin: answering, Model: "gpt-last"}}}
 	res, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()})
@@ -960,7 +1026,7 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 	if res.Text != "the brief" || res.ID != "open-7" || res.Provider != config.AgentOpenCode || res.Model != "gpt-last" {
 		t.Errorf("answer: %+v, want the last fallback's answer, named as its own", res)
 	}
-	if got := args(t, limitedRecord); strings.Contains(got, "--fallback-model") {
+	if got := sessionArgs(lastSession(t, limited)); strings.Contains(got, "--fallback-model") {
 		t.Errorf("the claude session was told a fallback model it cannot switch to:%s", got)
 	}
 	// Every attempt is held to its own backend's floor.
@@ -1005,13 +1071,13 @@ esac`)
 		t.Errorf("the fallback ran another model:%s", got)
 	}
 
-	failing, _ := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"the prompt was refused","session_id":"sess-0","num_turns":1}'`)
-	never, neverRecord := fakeCLI(t, claudeAnswer)
-	a = &CLIAgent{ClaudeBin: failing, Model: "opus", Fallback: &CLIAgent{ClaudeBin: never, Model: "sonnet"}}
+	failing := agenttest.Session(t, config.AgentClaude, agenttest.Turn{End: agenttest.TurnError, ResultText: "the prompt was refused", SessionID: "sess-0"})
+	never := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
+	a = &CLIAgent{ClaudeBin: failing.Bin, Model: "opus", Fallback: &CLIAgent{ClaudeBin: never.Bin, Model: "sonnet"}}
 	if _, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "the prompt was refused") {
 		t.Fatalf("a failure that is not about capacity: %v", err)
 	}
-	if _, err := os.Stat(neverRecord + ".args"); err == nil {
+	if never.Record(t).Starts != 0 {
 		t.Error("the fallback ran for a failure that is not about capacity")
 	}
 }
