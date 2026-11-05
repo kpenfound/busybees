@@ -1,10 +1,10 @@
 package eval
 
 import (
-	"os"
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/review"
 )
@@ -147,7 +147,7 @@ profile = "slow"
 	}
 
 	// And it grades a case: the rubric's score is the fake grader's answer.
-	g.ClaudeBin = os.Args[0]
+	g.ClaudeBin = agenttest.Session(t, "claude", agenttest.Turn{ResultText: `{"score": 0.9, "reasons": "the fake grader read the rubric"}`, SessionID: "sid-review"}).Bin
 	_, res := runRoleCase(t, config.RoleDeveloper, developerCase, answerRepo(), func(r *Runner) { r.Grader = g })
 	if c := checkNamed(t, res, "the pull request says what changed"); !c.Pass || c.Score == nil || *c.Score != 0.9 {
 		t.Fatalf("graded check: %+v", c)

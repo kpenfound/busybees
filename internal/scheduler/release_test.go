@@ -169,6 +169,7 @@ func TestEscalatedMilestoneWaitsForItsIssue(t *testing.T) {
 // fails, rather than counting as a release.
 func TestReleaseManagerDoneWithoutEffectFails(t *testing.T) {
 	h := newHarnessAt(t, releaseTOML, time.Now())
+	h.useSessions("claude", doneTurn())
 	seedMilestone(h, 2, 0)
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleReleaseManager)); got != 1 {

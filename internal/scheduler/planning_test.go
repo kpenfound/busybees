@@ -1,8 +1,8 @@
 package scheduler
 
 // The scheduler harness's fakegh stands in for the GitHub API, and
-// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
-// for a model session, throughout this file's tests. Both leave real
+// agenttest.Session stands in for a model session throughout this file's
+// tests. Both leave real
 // GitHub behaviour and a real model's judgment out of scope: what is
 // proven here is only that the scheduler reacts correctly to what the
 // harness is scripted to do.
@@ -34,6 +34,7 @@ func humanComment(h *harness, n int, body string, at time.Time) {
 // that asks for one.
 func TestACommentOnAPlanningIssueStartsADiscussionOnlySession(t *testing.T) {
 	h := newHarness(t, pmOnlyTOML)
+	h.useSessions("claude", doneTurn())
 	now := time.Now()
 	seedFeature(h, 5, "Exports", now.Add(-time.Hour))
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planning")
@@ -55,7 +56,7 @@ func TestACommentOnAPlanningIssueStartsADiscussionOnlySession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prompt := pmPrompt(t, h)
+	prompt := lastPMPrompt(t, h)
 	planning := section(t, prompt, "## Planning with a person")
 	for _, want := range []string{"#6: Offline mode", "should this sync in the background?", "Break nothing down from these"} {
 		if !strings.Contains(planning, want) {
@@ -99,6 +100,7 @@ func TestAnUntouchedPlanningIssueDoesNotWakeTheProductManager(t *testing.T) {
 func TestAPlannedFeatureIsBrokenDownOnceAndNotAgain(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
 	// Nothing has been broken down from it yet, and a bee had the last word
 	// in the planning conversation, so only the planned label presents it.
@@ -185,6 +187,7 @@ func TestClassifyIgnoresThePlanningLabels(t *testing.T) {
 func TestAPlannedFeatureIsNotRePresentedWhenItsProgressIsUnknown(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
 	h.gh.SubIssues[6] = github.SubIssueSummary{Total: 2}
 	quietFeature(h, 6, now.Add(-30*time.Minute))
@@ -205,6 +208,7 @@ func TestAPlannedFeatureIsNotRePresentedWhenItsProgressIsUnknown(t *testing.T) {
 func TestAnAgreedIssueLeavesTheFreshLists(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	seedFeature(h, 5, "Exports", now.Add(-time.Hour))
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
 	h.gh.SubIssues[6] = github.SubIssueSummary{}
@@ -234,6 +238,7 @@ func TestAnAgreedIssueLeavesTheFreshLists(t *testing.T) {
 func TestAPlannedProposalIsStillAProposal(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:proposal", "bees:planned")
 	h.gh.SubIssues[6] = github.SubIssueSummary{}
 	humanComment(h, 6, "what about conflicts?", now.Add(-time.Minute))

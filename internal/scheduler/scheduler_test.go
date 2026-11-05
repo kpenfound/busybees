@@ -43,9 +43,9 @@ import (
 // backends are, and a restricted turn's (a review pipeline session) by
 // fakeCodexReviewAppServer, driven by turn/start's input instead.
 //
-// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
+// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG,
 // FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
-// FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
+// FAKE_COST, FAKE_SIGNAL,
 // FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_ASSEMBLE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
 // FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL, FAKE_REVIEW_NO_SUBMIT,
 // FAKE_REVIEW_MISMATCH, FAKE_QA_NO_REPORT, FAKE_QA_OTHER_MAIL)
@@ -560,21 +560,16 @@ func runFakeRole(role, sessionID, sessionDir, stateDir string, box *mail.Box, fa
 		}
 		n := counter("dev")
 		// Infrastructure failures: FAKE_DEV_HANG=N hangs the first N
-		// attempts until the role timeout kills them; FAKE_DEV_FAIL reports
-		// `failed` outright.
+		// attempts until the role timeout kills them.
 		if hang, _ := strconv.Atoi(os.Getenv("FAKE_DEV_HANG")); n <= hang {
 			time.Sleep(time.Minute)
 		}
-		if os.Getenv("FAKE_DEV_FAIL") == "1" {
-			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot build"}
-			break
-		}
-		// FAKE_ATTEMPT_FAIL makes best-of-N attempt <i> ("all": every
-		// attempt) report `failed` without committing or pushing anything:
+		// FAKE_ATTEMPT_FAIL makes best-of-N attempt <i> report `failed`
+		// without committing or pushing anything:
 		// an attempt with nothing on its branch for the assembler to read.
 		if v := os.Getenv("FAKE_ATTEMPT_FAIL"); v != "" {
 			_, i, isAttempt := strings.Cut(sessionID, "-attempt-")
-			if isAttempt && (v == "all" || v == i) {
+			if isAttempt && v == i {
 				outcome = session.Outcome{Status: OutcomeFailed, Note: "attempt " + i + " could not build"}
 				break
 			}
@@ -615,13 +610,6 @@ func runFakeRole(role, sessionID, sessionDir, stateDir string, box *mail.Box, fa
 				fail(err)
 			}
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
-			break
-		}
-		// FAKE_REVIEW_FAIL reports `failed` outright, the way a reviewer
-		// that could not review does.
-		if os.Getenv("FAKE_REVIEW_FAIL") == "1" {
-			counter("review")
-			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot read the diff"}
 			break
 		}
 		// The judge session posts the findings its task carries as one
@@ -1017,15 +1005,16 @@ func (c *fakeClock) advance(d time.Duration) {
 }
 
 type harness struct {
-	t     *testing.T
-	cfg   *config.Config
-	gh    *fakeGH
-	store *state.Store
-	box   *mail.Box
-	sched *Scheduler
-	clone string
-	logs  *syncBuffer
-	clock *fakeClock // nil unless the harness was built with a fixed clock
+	fixture *agenttest.SessionFixture
+	t       *testing.T
+	cfg     *config.Config
+	gh      *fakeGH
+	store   *state.Store
+	box     *mail.Box
+	sched   *Scheduler
+	clone   string
+	logs    *syncBuffer
+	clock   *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 // syncBuffer collects log output; workers log concurrently.
@@ -1173,11 +1162,19 @@ func (h *harness) sessions(role string) []string {
 
 // sessionOrder lists the session directories in the order the sessions ran.
 func (h *harness) sessionOrder() []string {
+	var out []string
+	if h.fixture != nil {
+		for _, inv := range h.fixture.Record(h.t).Sessions {
+			if dir := inv.Environment[session.EnvSessionDir]; dir != "" {
+				out = append(out, filepath.Base(dir))
+			}
+		}
+	}
 	b, err := os.ReadFile(filepath.Join(h.store.Dir, "fake-order"))
 	if err != nil {
-		return nil
+		return out
 	}
-	return strings.Fields(strings.TrimSpace(string(b)))
+	return append(out, strings.Fields(strings.TrimSpace(string(b)))...)
 }
 
 // sessionNames is sessionOrder with the "<date>-<time>-" prefix and the random
@@ -1437,6 +1434,7 @@ func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
 
 func TestEscalationWhenNoPR(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
+	h.useSessions("claude", agenttest.Turn{ResultText: "ok", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: OutcomePROpened, Work: ghwork.New(0, fakePR)}})
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "x", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 	// No PR 101 registered: the developer claims pr-opened but nothing exists.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -1514,6 +1512,7 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 
 func TestLabelBackstop(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[filter]\nassignee = \"kyle\"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n")
+	h.useSessions("claude", doneTurn())
 	// A triage issue so the project manager runs; and an issue "created by a
 	// bee" with a kind label but no base label and no assignee.
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "triage me", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
@@ -1666,6 +1665,7 @@ pre_review_checks = false
 
 func TestFeedbackGoesToProductManager(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
+	h.useSessions("claude", doneTurn())
 	now := time.Now()
 	h.gh.Issues[3] = &github.Issue{Number: 3, Title: "Dark mode please", Body: "idea", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
@@ -1713,6 +1713,7 @@ func TestFeedbackGoesToProductManager(t *testing.T) {
 
 func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
+	h.useSessions("claude", doneTurn())
 	now := time.Now()
 	// A feature filed by a person, never touched by the PM: fresh.
 	h.gh.Issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},
@@ -1814,7 +1815,6 @@ enabled = false
 // A session that ran and reported `failed` made a decision: it escalates at
 // once, however many retries are configured.
 func TestReportedFailureEscalatesWithoutRetry(t *testing.T) {
-	t.Setenv("FAKE_DEV_FAIL", "1")
 	h := newHarness(t, baseTOML+`
 retries = 2
 retry_delay = "0s"
@@ -1825,6 +1825,7 @@ enabled = false
 [roles.project_manager]
 enabled = false
 `)
+	h.useSessions("claude", agenttest.Turn{ResultText: "ok", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: OutcomeFailed, Note: "cannot build"}})
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -2277,6 +2278,7 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 // looks each open work item's parent up and the prompt renders it.
 func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
+	h.useSessions("claude", doneTurn())
 	now := time.Now()
 	// The fake answers the parent query for issue 1 with feature #5.
 	h.gh.Issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},

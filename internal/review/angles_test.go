@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -21,7 +22,7 @@ import (
 // once from sessions run one after another. It always answers, so it leaves
 // unverified whether a real agent binary would accept the read-only flags
 // and the prompt it is given; TestAnAngleSessionIsReadOnly, which runs a real
-// subprocess through fakeCLI, is what tests that boundary.
+// subprocess through agenttest.Session, is what tests that boundary.
 type fakeAngleAgent struct {
 	expect int
 	fail   map[string]error
@@ -242,9 +243,9 @@ func TestAnAngleSessionIsReadOnly(t *testing.T) {
 	// The restriction is the agent's, and an angle session gets it by
 	// running through the agent: this is the fan-out driving the real CLI
 	// command line, not a fake agent.
-	bin, record := fakeCLI(t, claudeAnswer)
+	fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
 	project := onlyAngle(t, AngleGeneral)
-	angles := &Angles{Agent: &CLIAgent{ClaudeBin: bin}, Provider: config.AgentClaude, Dir: t.TempDir()}
+	angles := &Angles{Agent: &CLIAgent{ClaudeBin: fixture.Bin}, Provider: config.AgentClaude, Dir: t.TempDir()}
 	runs, err := angles.Run(context.Background(), t.TempDir(), project, testBrief(), testDiff)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +253,7 @@ func TestAnAngleSessionIsReadOnly(t *testing.T) {
 	if len(runs) != 1 || runs[0].SessionID != "sess-1" || runs[0].Answer != "the brief" {
 		t.Fatalf("runs = %+v, want the one angle's session read", runs)
 	}
-	got := args(t, record)
+	got := sessionArgs(lastSession(t, fixture))
 	for _, want := range []string{
 		"\n--allowedTools\nRead,Grep,Glob,LS,NotebookRead\n",
 		"\n--disallowedTools\nBash,BashOutput,Edit,KillShell,MultiEdit,NotebookEdit,Task,WebFetch,WebSearch,Write\n",
@@ -266,7 +267,7 @@ func TestAnAngleSessionIsReadOnly(t *testing.T) {
 	if strings.Contains(got, "--dangerously-skip-permissions") {
 		t.Errorf("an angle session skipped permissions:\n%s", got)
 	}
-	if prompt := recorded(t, record, "stdin"); !strings.Contains(prompt, "## Your angle: general") {
+	if prompt := lastSession(t, fixture).Prompt; !strings.Contains(prompt, "## Your angle: general") {
 		t.Errorf("the CLI was not given the angle's prompt:\n%s", prompt)
 	}
 }
@@ -341,15 +342,15 @@ func TestAnAngleModelRunsThatAngleAsItsModel(t *testing.T) {
 		{AngleGeneral, "opus"},
 	} {
 		t.Run(tc.angle, func(t *testing.T) {
-			bin, record := fakeCLI(t, claudeAnswer)
+			fixture := agenttest.Session(t, config.AgentClaude, agenttest.Turn{ResultText: "the brief", SessionID: "sess-1", NumTurns: 3, CostUSD: 0.5})
 			angles := NewAngles(cfg, t.TempDir())
 			angles.Checkout = nil
-			angles.Agent.(*CLIAgent).ClaudeBin = bin
+			angles.Agent.(*CLIAgent).ClaudeBin = fixture.Bin
 			runs, err := angles.Run(context.Background(), t.TempDir(), onlyAngle(t, tc.angle), testBrief(), testDiff)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := args(t, record); !strings.Contains(got, "\n--model\n"+tc.want+"\n") {
+			if got := sessionArgs(lastSession(t, fixture)); !strings.Contains(got, "\n--model\n"+tc.want+"\n") {
 				t.Errorf("the %s session was not run as %s:\n%s", tc.angle, tc.want, got)
 			}
 			if len(runs) != 1 || runs[0].Model != tc.want || runs[0].Provider != config.AgentClaude {
@@ -359,7 +360,7 @@ func TestAnAngleModelRunsThatAngleAsItsModel(t *testing.T) {
 			if _, err := angles.Resume(context.Background(), runs[0], "why?"); err != nil {
 				t.Fatal(err)
 			}
-			if got := args(t, record); !strings.Contains(got, "\n--model\n"+tc.want+"\n") || !strings.Contains(got, "\n--resume\n") {
+			if got := sessionArgs(lastSession(t, fixture)); !strings.Contains(got, "\n--model\n"+tc.want+"\n") || !strings.Contains(got, "\n--resume\n") {
 				t.Errorf("the resumed %s session was not run as %s:\n%s", tc.angle, tc.want, got)
 			}
 			if angles.Model != "opus" || angles.Agent.(*CLIAgent).Model != "opus" {
@@ -422,9 +423,9 @@ func (p *progressRecorder) record(angle string, event AngleEvent) {
 // (claude) differs from the agent that answered (codex): a codex thread id
 // never reaches claude, and no fresh session starts either.
 func TestAnAngleThatFellBackIsRecordedUnderTheAgentThatAnswered(t *testing.T) {
-	limited, limitedRecord := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
-	answering, answeringRecord := fakeCodex(t, codexAnswer)
-	agent := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{Provider: config.AgentCodex, CodexBin: answering, Model: "gpt-cheap"}}
+	limited := agenttest.Session(t, config.AgentClaude, agenttest.Turn{End: agenttest.TurnError, ResultText: "Rate limit reached for opus", SessionID: "sess-0"})
+	answering := agenttest.Session(t, config.AgentCodex, agenttest.Turn{ResultText: "the brief", SessionID: "thread-9", NumTurns: 3})
+	agent := &CLIAgent{ClaudeBin: limited.Bin, Model: "opus", Fallback: &CLIAgent{Provider: config.AgentCodex, CodexBin: answering.Bin, Model: "gpt-cheap"}}
 	angles := &Angles{Agent: agent, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir()}
 	runs, err := angles.Run(context.Background(), t.TempDir(), onlyAngle(t, AngleDocs), testBrief(), testDiff)
 	if err != nil {
@@ -437,11 +438,24 @@ func TestAnAngleThatFellBackIsRecordedUnderTheAgentThatAnswered(t *testing.T) {
 		!strings.Contains(err.Error(), "ran as codex and the configured provider is claude") {
 		t.Fatalf("resume of a fallen-back angle: %v, want it refused because codex differs from the configured claude", err)
 	}
-	if strings.Contains(args(t, limitedRecord), "--resume thread-9") {
-		t.Errorf("limited claude fake was resumed, want the refusal to never launch it:\n%s", args(t, limitedRecord))
+	if record := limited.Record(t); record.Starts != 1 || record.Sessions[0].ResumeID != "" {
+		t.Errorf("limited claude fake was resumed, want only the original run: %+v", record)
 	}
-	if strings.Count(recorded(t, answeringRecord, "stdin"), "\"method\":\"thread/start\"") != 1 ||
-		strings.Contains(recorded(t, answeringRecord, "stdin"), "\"method\":\"thread/resume\"") {
-		t.Errorf("codex fake was launched again by the refused resume, want only the original run's thread/start:\n%s", recorded(t, answeringRecord, "stdin"))
+	record := answering.Record(t)
+	if record.Starts != 1 {
+		t.Fatalf("codex fake was launched again by the refused resume, want only the original run: %+v", record)
+	}
+	methods := record.Sessions[0].Methods
+	starts, resumes := 0, 0
+	for _, method := range methods {
+		switch method {
+		case "thread/start":
+			starts++
+		case "thread/resume":
+			resumes++
+		}
+	}
+	if starts != 1 || resumes != 0 {
+		t.Errorf("codex fake requests = %v, want only the original run's thread/start", methods)
 	}
 }

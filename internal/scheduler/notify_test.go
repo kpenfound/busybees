@@ -185,6 +185,7 @@ func TestApprovedPRWithoutNotify(t *testing.T) {
 // runSession fills from the config.
 func TestProductManagerSessionIsToldTheMentions(t *testing.T) {
 	h := newHarness(t, notifyTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
+	h.useSessions("claude", doneTurn())
 	now := time.Now()
 	h.gh.Issues[3] = &github.Issue{Number: 3, Title: "Dark mode please", Body: "idea", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}

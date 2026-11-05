@@ -29,6 +29,7 @@ enabled = false
 // specced by the project manager on the way.
 func TestUnlabelledIssueGoesToTheProductManager(t *testing.T) {
 	h := newHarness(t, managersTOML)
+	h.useSessions("claude", doneTurn())
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}}, CreatedAt: time.Now().Add(-time.Hour)}
@@ -81,6 +82,7 @@ func TestUnlabelledIssueWithoutTheBaseLabel(t *testing.T) {
 assignee = "kyle"
 require_label = false
 `)
+	h.useSessions("claude", doneTurn())
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN",
 		Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
 
@@ -106,6 +108,7 @@ require_label = false
 // the project manager.
 func TestBugIssueWithNoStateLabelGoesToTheProductManager(t *testing.T) {
 	h := newHarness(t, managersTOML)
+	h.useSessions("claude", doneTurn())
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Export writes an empty file", Body: "bees export gives me 0 bytes",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:bug"}},
@@ -170,6 +173,7 @@ enabled = false
 func TestUnlabelledIssueGoesToTheProjectManagerWhenProductManagerDisabled(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, projectManagerOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-time.Hour)}

@@ -16,8 +16,6 @@ import (
 	"github.com/kpenfound/busybees/internal/ghwork"
 )
 
-func fakeClaude(t *testing.T, body string) string { return agenttest.Script(t, "claude", body) }
-
 func newRunner(t *testing.T, bin string) *Runner {
 	t.Helper()
 	return &Runner{ClaudeBin: bin, SessionsDir: t.TempDir(), StateDir: "/state", Repo: "a/b", Label: "bees", BeesBin: "/usr/local/bin/bees"}
@@ -26,22 +24,15 @@ func newRunner(t *testing.T, bin string) *Runner {
 // TestRunSuccess drives a full session through Runner.Run and checks every
 // artifact a caller can observe: the claude invocation (args, stdin, env),
 // the written mcp.json, the system prompt file, the parsed result and
-// outcome, and that the transcript and result files exist. fakeClaude is a
-// shell script standing in for the real claude binary: it proves bees builds
-// the documented invocation and parses back what claude would write, not
-// that the real claude CLI accepts these flags or emits this exact stream-json
-// shape.
+// outcome, and that the transcript and result files exist. The session fixture
+// records the invocation and emits a scripted answer; it does not confirm the
+// real claude CLI accepts these flags or emits this exact stream-json shape.
 func TestRunSuccess(t *testing.T) {
-	bin := fakeClaude(t, `
-# record what we were given
-printf '%s' "$@" > "$BEES_SESSION_DIR/args.txt"
-cat > "$BEES_SESSION_DIR/stdin.txt"
-env > "$BEES_SESSION_DIR/env.txt"
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"result","subtype":"success","is_error":false,"result":"all done","session_id":"abc","num_turns":4,"total_cost_usd":0.25}'
-printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"note":"hi"}' > "$BEES_SESSION_DIR/outcome.json"
-`)
-	r := newRunner(t, bin)
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{
+		ResultText: "all done", SessionID: "abc", NumTurns: 4, CostUSD: 0.25,
+		Outcome: &agenttest.SessionOutcome{Status: "pr-opened", Work: ghwork.New(0, 12), Note: "hi"},
+	})
+	r := newRunner(t, fixture.Bin)
 	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 10, Timeout: time.Minute,
 		MCP:   map[string]config.MCPServer{"x": {Command: "srv", Env: map[string]string{"K": "$HOME"}}},
 		Shell: "/bin/sh", Env: map[string]string{"FACTORY_TOKEN": "abc", "CACHE": "$HOME/cache"}}
@@ -55,19 +46,20 @@ printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"
 	if !res.HasOutcome || res.Outcome.Status != "pr-opened" || ghwork.PR(res.Outcome.Work) != 12 {
 		t.Fatalf("outcome: %+v", res.Outcome)
 	}
-	args, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+	invocation := fixture.Record(t).Sessions[0]
+	args := invocation.Args
 	for _, want := range []string{"-p", "--model", "opus", "--max-turns", "10", "--dangerously-skip-permissions", "--mcp-config", "--strict-mcp-config", "--append-system-prompt-file"} {
-		if !strings.Contains(string(args), want) {
+		if !slices.Contains(args, want) {
 			t.Errorf("args missing %s: %s", want, args)
 		}
 	}
-	stdin, _ := os.ReadFile(filepath.Join(res.SessionDir, "stdin.txt"))
-	if string(stdin) != "TASK" {
-		t.Fatalf("stdin: %q", stdin)
+	if invocation.Prompt != "TASK" {
+		t.Fatalf("stdin: %q", invocation.Prompt)
 	}
-	env, _ := os.ReadFile(filepath.Join(res.SessionDir, "env.txt"))
+	env := invocation.Environment
 	for _, want := range []string{"BEES_ROLE=developer", "BEES_STATE_DIR=/state", "BEES_REPO=a/b", "EXTRA=1", "BEES_BIN=/usr/local/bin/bees", "SHELL=/bin/sh", "FACTORY_TOKEN=abc", "CACHE=" + os.Getenv("HOME") + "/cache"} {
-		if !strings.Contains(string(env), want) {
+		key, value, _ := strings.Cut(want, "=")
+		if env[key] != value {
 			t.Errorf("env missing %s", want)
 		}
 	}
@@ -105,14 +97,10 @@ printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"
 
 // TestEnvDropsInheritedBeesVariables checks that a session never inherits
 // BEES_* state from the process that started it (only a session's own
-// request and configured role env reach it). fakeClaude only dumps its
+// request and configured role env reach it). The fixture records its
 // environment; it does not confirm the real claude binary would launch
 // correctly with whatever is or isn't in that environment.
 func TestEnvDropsInheritedBeesVariables(t *testing.T) {
-	bin := fakeClaude(t, `
-env > "$BEES_SESSION_DIR/env.txt"
-echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
-`)
 	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}
 	run := func(t *testing.T, roleEnv, reqEnv map[string]string) []string {
 		t.Helper()
@@ -121,15 +109,16 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 		t.Setenv(EnvStateDir, "/inherited")
 		r := role
 		r.Env = roleEnv
-		res, err := newRunner(t, bin).Run(context.Background(), Request{Name: "t", Profile: ProfileForRole(r), Workspace: vcs.Directory(t.TempDir()), Env: reqEnv})
+		fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
+		_, err := newRunner(t, fixture.Bin).Run(context.Background(), Request{Name: "t", Profile: ProfileForRole(r), Workspace: vcs.Directory(t.TempDir()), Env: reqEnv})
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := os.ReadFile(filepath.Join(res.SessionDir, "env.txt"))
-		if err != nil {
-			t.Fatal(err)
+		var lines []string
+		for key, value := range fixture.Record(t).Sessions[0].Environment {
+			lines = append(lines, key+"="+value)
 		}
-		return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+		return lines
 	}
 	has := func(lines []string, want string) bool { return slices.Contains(lines, want) }
 	// lookup returns every line setting name, so a failure names the offender
@@ -196,23 +185,21 @@ func readMCPConfig(t *testing.T, sessionDir string) map[string]MCPEntry {
 
 // TestRunAlwaysWritesMCPConfig checks that mcp.json and its strict flags are
 // present even for a role with no [mcp] servers of its own: the built-in
-// bees server is always configured. fakeClaude never reads mcp.json itself,
+// bees server is always configured. The fixture never starts that server,
 // so this leaves unverified whether the real claude CLI actually starts the
 // built-in server from it.
 func TestRunAlwaysWritesMCPConfig(t *testing.T) {
-	bin := fakeClaude(t, `
-printf '%s' "$@" > "$BEES_SESSION_DIR/args.txt"
-echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
-`)
-	r := newRunner(t, bin)
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
+	r := newRunner(t, fixture.Bin)
 	role := config.ResolvedRole{Name: "reviewer", Model: "opus", MaxTurns: 10, Timeout: time.Minute}
 	res, err := r.Run(context.Background(), Request{Name: "t5", Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir())})
 	if err != nil {
 		t.Fatal(err)
 	}
-	args, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+	invocation := fixture.Record(t).Sessions[0]
+	args := invocation.Args
 	for _, want := range []string{"--mcp-config", "--strict-mcp-config"} {
-		if !strings.Contains(string(args), want) {
+		if !slices.Contains(args, want) {
 			t.Errorf("args missing %s: %s", want, args)
 		}
 	}
@@ -232,7 +219,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 }
 
 func TestConfiguredSkillsNeedAPreparer(t *testing.T) {
-	r := newRunner(t, fakeClaude(t, "exit 0"))
+	r := newRunner(t, agenttest.Session(t, "claude", agenttest.Turn{}).Bin)
 	_, err := r.Run(context.Background(), Request{Workspace: vcs.Directory(t.TempDir()), Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Skills: []string{"https://example.com/skills"}})})
 	if err == nil || !strings.Contains(err.Error(), "no skills manager") {
 		t.Fatalf("missing preparer: %v", err)

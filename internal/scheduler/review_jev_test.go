@@ -61,7 +61,7 @@ func TestFactoryJevReachesJudgeSession(t *testing.T) {
 					if mode == "request_cancelled" {
 						p.Results = []jevtest.Result{{Err: &systemone.Error{Kind: systemone.KindCancelled, Message: "fake request cancellation"}}}
 					}
-					j := review.NewJevJudge(jev.DefaultSettings())
+					j := review.NewJevJudge(review.DefaultJevSettings())
 					j.Provider = p.Factory()
 					if mode != "baseline" && mode != "off" {
 						t.Setenv("OPENROUTER_API_KEY", "factory-test-key")
@@ -163,13 +163,13 @@ func TestFactoryJevReachesJudgeSession(t *testing.T) {
 
 func TestFactoryReviewCancellationDuringJevIsNotCompleted(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "factory-test-key")
-	t.Setenv("FAKE_REVIEW_SIZE", "m")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p := &jevtest.Provider{Wait: func(call context.Context) error { cancel(); <-call.Done(); return call.Err() }}
-	j := review.NewJevJudge(jev.DefaultSettings())
+	j := review.NewJevJudge(review.DefaultJevSettings())
 	j.Provider = p.Factory()
 	h := newHarnessAt(t, jevReviewerTOML, time.Now(), func(d *Deps) { d.Jev = j })
+	h.useSessions("claude", reviewPipelineTurns("m", "general review", "documentation accuracy", "test coverage")...)
 	pr := personsPR()
 	h.gh.PRs[pr.Number] = pr
 	events := h.sched.Subscribe()

@@ -106,6 +106,7 @@ func TestNotesConsolidationIsAskedForOnSchedule(t *testing.T) {
 // same file.
 func TestSingletonRunKeepsSessionCounters(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.project_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n")
+	h.useSessions("claude", doneTurn())
 	h.sched.OnlyRoles = map[string]bool{config.RoleProductManager: true}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

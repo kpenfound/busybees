@@ -39,9 +39,8 @@ import (
 // FAKE_DEV_SEES_PR makes the developer write what the GitHub it was given
 // says about the pull request it was handed into seen-pr.txt in the state
 // directory, which is how a test reads what a session saw.
-// FAKE_COST is each session's cost, FAKE_DEV_HANG and FAKE_REVIEW_HANG make
-// the developer or the reviewer hang that many seconds, and FAKE_DEV_FAIL
-// makes the developer report failed. FAKE_PM and FAKE_QA make those two
+// FAKE_COST is each session's cost, and FAKE_REVIEW_HANG makes the reviewer
+// hang that many seconds. FAKE_PM and FAKE_QA make those two
 // roles do the work a per-role case grades them on: the project manager
 // refines #1, closes #3 as a duplicate and answers the developer about #2,
 // and QA files a bug and reports to the product manager.
@@ -206,13 +205,6 @@ func runFakeRole(fail func(error)) session.Outcome {
 	outcome := session.Outcome{Status: "done", Note: "ok"}
 	switch os.Getenv(session.EnvRole) {
 	case config.RoleDeveloper:
-		if hang, _ := strconv.Atoi(os.Getenv("FAKE_DEV_HANG")); hang > 0 {
-			time.Sleep(time.Duration(hang) * time.Second)
-		}
-		if os.Getenv("FAKE_DEV_FAIL") == "1" {
-			outcome = session.Outcome{Status: "failed", Note: "cannot build"}
-			break
-		}
 		if os.Getenv("FAKE_DEV_SEES_PR") == "1" && pr != 0 {
 			n := strconv.Itoa(pr)
 			seen := gh("", "pr", "view", n, "-R", repo, "--json", "title,body,headRefName,baseRefName,labels") +

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/jev"
 	"github.com/kpenfound/agentcore/jev/jevtest"
 	"github.com/kpenfound/agentcore/jev/systemone"
@@ -35,13 +36,13 @@ const jevPipelineAnswer = `{"summary":"Updates widgets","size":"s","findings":[
 func jevPipelineAgent(t *testing.T) {
 	t.Helper()
 	originalPath := os.Getenv("PATH")
-	fakeClaude(t, jevPipelineAnswer)
-	bin := os.Getenv("PATH")
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: jevPipelineAnswer, SessionID: "sess-triage"})
+	bin := fixture.Dir
 	// Checkout acquisition is deliberately unavailable; never use host docker.
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("BEES_CLAUDE_BIN", filepath.Join(bin, "claude"))
+	t.Setenv("BEES_CLAUDE_BIN", fixture.Bin)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+originalPath)
 }
 
@@ -138,7 +139,7 @@ func TestMachineReviewsShareJevCooldownAcrossReload(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "machine-test-key")
 	jevPipelineAgent(t)
 	p := &jevtest.Provider{Results: []jevtest.Result{{Err: &systemone.Error{Kind: systemone.KindRateLimited, Message: "fake rate limit"}}}}
-	judge := review.NewJevJudge(jev.DefaultSettings())
+	judge := review.NewJevJudge(review.DefaultJevSettings())
 	judge.Provider = p.Factory()
 	// A fixed clock prevents a slow machine from expiring the cooldown.
 	judge.Now = func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
@@ -227,7 +228,8 @@ func TestFactoryReviewJudgeUsesProcessDefaults(t *testing.T) {
 	if j != factoryReviewJudge() {
 		t.Fatal("Judge was constructed more than once")
 	}
-	if got, want := j.Config(), jev.DefaultSettings(); got != want {
+	want := jev.Settings{URL: "https://openrouter.ai/api", Model: "~typesafe/jev-latest", APIKeyEnv: "OPENROUTER_API_KEY", Timeout: 10 * time.Second}
+	if got := j.Config(); got != want {
 		t.Fatalf("factory settings=%+v, want %+v", got, want)
 	}
 	t.Setenv("OPENROUTER_API_KEY", "test-key")

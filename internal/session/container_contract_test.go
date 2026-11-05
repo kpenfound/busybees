@@ -22,12 +22,11 @@ import (
 // sbx session is refused, with no session directory left behind and no
 // agent ever started, when it is missing an image, [github], a credential
 // or a sandbox template. claude here would unconditionally report success
-// if it ever ran; the "ran" file check is what actually establishes it
-// never does.
+// if it ever ran; the fixture record establishes that it never does.
 func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-	claude := fakeClaude(t, `touch "$BEES_SESSION_DIR/ran"; echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'`)
+	claude := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
 	for _, tc := range []struct {
 		name string
 		role config.ResolvedRole
@@ -40,7 +39,7 @@ func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 		{"sbx without github", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxSbx}, config.GitHub{}, "[github]"},
 		{"sbx for an agent without a template", config.ResolvedRole{Name: "developer", Agent: "pi", Sandbox: config.SandboxSbx}, config.GitHub{Login: "bot", Token: "t"}, `sandbox "sbx" has no template for agent "pi"`},
 	} {
-		r := newRunner(t, claude)
+		r := newRunner(t, claude.Bin)
 		r.GitHub = tc.gh
 		_, err := r.Run(context.Background(), Request{Name: "boxed", Profile: ProfileForRole(tc.role), Workspace: vcs.Directory(t.TempDir())})
 		if err == nil {
@@ -51,11 +50,8 @@ func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 				t.Errorf("%s: error %q does not mention %q", tc.name, err, want)
 			}
 		}
-		entries, _ := os.ReadDir(r.SessionsDir)
-		for _, e := range entries {
-			if _, err := os.Stat(filepath.Join(r.SessionsDir, e.Name(), "ran")); err == nil {
-				t.Errorf("%s: claude ran", tc.name)
-			}
+		if claude.Record(t).Starts != 0 {
+			t.Errorf("%s: claude ran", tc.name)
 		}
 	}
 }
@@ -77,7 +73,8 @@ func TestContainerIdentityContract(t *testing.T) {
 	t.Setenv("BEES_STALE", "old")
 	t.Setenv("BEES_GITHUB_KEY", "github-secret")
 	t.Setenv("BEES_NOTES_KEY", "notes-secret")
-	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
+	r := newRunner(t, fixture.Bin)
 	r.DockerBin = agenttest.Docker(t, "image", EnvSessionDir)
 	r.BeesBin = agenttest.MCPServer(t, EnvSessionDir)
 	r.ContainerListen = "127.0.0.1:0"
@@ -122,11 +119,8 @@ func TestContainerIdentityContract(t *testing.T) {
 	if !slices.Equal(entries, wantEntries) {
 		t.Errorf("git entries: %+v, want %+v", entries, wantEntries)
 	}
-	for _, name := range []string{"docker-args.txt", "args.txt", "mcp.json"} {
+	for _, name := range []string{"docker-args.txt", "mcp.json"} {
 		data, err := os.ReadFile(filepath.Join(res.SessionDir, name))
-		if os.IsNotExist(err) && name == "args.txt" {
-			continue
-		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,6 +128,11 @@ func TestContainerIdentityContract(t *testing.T) {
 			if strings.Contains(string(data), secret) {
 				t.Errorf("credential serialized in %s", name)
 			}
+		}
+	}
+	for _, secret := range []string{"github-secret", "notes-secret", "agent-secret"} {
+		if strings.Contains(strings.Join(fixture.Record(t).Sessions[0].Args, "\n"), secret) {
+			t.Error("credential serialized in agent arguments")
 		}
 	}
 	serverData, err := os.ReadFile(filepath.Join(res.SessionDir, "server-env.txt"))
@@ -198,8 +197,8 @@ func TestDeniedProfileDoesNotInjectFactoryVCSIdentity(t *testing.T) {
 	}
 	for _, mode := range []string{config.SandboxNone, config.SandboxClaude, config.SandboxContainer} {
 		t.Run(mode, func(t *testing.T) {
-			r := newRunner(t, fakeClaude(t, `env > "$BEES_SESSION_DIR/agent-env"
-echo '{"type":"result","subtype":"success","result":"ok"}'`))
+			fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
+			r := newRunner(t, fixture.Bin)
 			r.GitHub = config.GitHub{Login: "bot", Token: "denied-github-token", GitName: "denied-author", GitEmail: "denied@example.com"}
 			r.DockerBin = agenttest.Docker(t, "image", EnvSessionDir)
 			r.BeesBin = agenttest.MCPServer(t, EnvSessionDir)
@@ -222,11 +221,11 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`))
 			if err != nil || res.IsError {
 				t.Fatalf("run: %+v, %v", res, err)
 			}
-			data, err := os.ReadFile(filepath.Join(res.SessionDir, "agent-env"))
-			if err != nil {
-				t.Fatal(err)
+			var lines []string
+			for key, value := range fixture.Record(t).Sessions[0].Environment {
+				lines = append(lines, key+"="+value)
 			}
-			noVCSLeak(t, data)
+			noVCSLeak(t, []byte(strings.Join(lines, "\n")))
 			if mode == config.SandboxContainer {
 				serverData, err := os.ReadFile(filepath.Join(res.SessionDir, "server-env.txt"))
 				if err != nil {
@@ -250,7 +249,8 @@ func TestSbxIdentityContract(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 	t.Setenv("HOST_ONLY", "not-sandbox-context")
 	t.Setenv("BEES_GITHUB_KEY", "github-secret")
-	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
+	r := newRunner(t, fixture.Bin)
 	r.SbxBin = agenttest.Sbx(t, EnvSessionDir)
 	r.BeesBin = agenttest.MCPServer(t, EnvSessionDir)
 	r.StateDir = t.TempDir()

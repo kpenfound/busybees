@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghapp"
@@ -40,10 +41,9 @@ func sessionEnv(t *testing.T, gh config.GitHub) map[string]string {
 }
 
 // sessionEnvDir is sessionEnv plus the session directory, for the callers that
-// have something to say about what was written there. The environment is
-// dumped outside that directory on purpose: it holds every secret a session
-// was given, and a test asserting nothing secret reached the session directory
-// must not be reading its own scaffolding.
+// have something to say about what was written there. The fixture records
+// the environment outside that directory: a test asserting no secret reached
+// the session directory must not be reading its own scaffolding.
 func sessionEnvDir(t *testing.T, gh config.GitHub) (map[string]string, string) {
 	t.Helper()
 	for _, k := range []string{EnvGHToken, "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
@@ -71,12 +71,8 @@ func sessionEnvDir(t *testing.T, gh config.GitHub) (map[string]string, string) {
 		}
 	}
 
-	dump := filepath.Join(t.TempDir(), "env.txt")
-	bin := fakeClaude(t, `
-env > `+dump+`
-echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
-`)
-	r := newRunner(t, bin)
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
+	r := newRunner(t, fixture.Bin)
 	r.GitHub = gh
 	res, err := r.Run(context.Background(), Request{
 		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
@@ -85,18 +81,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(dump)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := map[string]string{}
-	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
-		k, v, ok := strings.Cut(line, "=")
-		if ok {
-			out[k] = v
-		}
-	}
-	return out, res.SessionDir
+	return fixture.Record(t).Sessions[0].Environment, res.SessionDir
 }
 
 // gitConfigEntries reads the GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n pairs back
@@ -118,7 +103,7 @@ func gitConfigEntries(env map[string]string) []envVar {
 // as the bot, its commits are the bot's and its pushes go through gh's
 // credential helper instead of the person's stored credentials. With the
 // table unset nothing is injected and the machine's own environment reaches
-// the session unchanged. sessionEnv's fakeClaude only dumps its environment;
+// the session unchanged. sessionEnv's fixture records its environment;
 // it does not confirm gh or git actually behave as the dumped variables say
 // they would (TestSessionCommitsAndPushesAsTheFactory checks git's push).
 func TestGitHubIdentityReachesTheSession(t *testing.T) {
@@ -218,7 +203,7 @@ func TestSessionCommitsAndPushesAsTheFactory(t *testing.T) {
 	origin, clone := testutil.SetupRepos(t)
 	t.Setenv("GIT_CONFIG_COUNT", "")
 
-	bin := fakeClaude(t, `
+	bin := agenttest.Script(t, "claude", `
 git checkout -q -b bees/issue-1
 echo change > file.txt
 git add file.txt
@@ -263,7 +248,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 // issue_view, comment, done and the rest would fail on the first call. The name has to reach
 // the session; the value it carries is the one the scheduler resolved, so a
 // session can never be handed a token from a stale environment.
-// sessionEnvDir's fakeClaude only dumps its environment; the config.Load
+// sessionEnvDir's fixture records its environment; the config.Load
 // calls below are this test's own stand-in for the in-session `bees mcp
 // serve`, not a run of the real one.
 func TestTheTokenVariableReachesTheSession(t *testing.T) {
@@ -362,7 +347,9 @@ func TestCodexBuiltinMCPCredentials(t *testing.T) {
 			entry := r.builtinMCP(req, dir)
 			argsPath := filepath.Join(t.TempDir(), "args")
 			envPath := filepath.Join(t.TempDir(), "environment")
-			r.CodexBin = fakeClaude(t, "env > "+envPath+"\nprintf '%s\\n' \"$@\" > "+argsPath+"\necho '{\"type\":\"turn.completed\"}'")
+			// This credential-only stub exits before turn/start; a Session turn
+			// would test a different exchange.
+			r.CodexBin = agenttest.Script(t, "claude", "env > "+envPath+"\nprintf '%s\\n' \"$@\" > "+argsPath+"\necho '{\"type\":\"turn.completed\"}'")
 			req.SessionDir = dir
 			if _, err := r.Run(context.Background(), req); err != nil {
 				t.Fatal(err)
@@ -465,7 +452,7 @@ func TestGitHubAppSession(t *testing.T) {
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 
 	out := filepath.Join(t.TempDir(), "out.txt")
-	bin := fakeClaude(t, `
+	bin := agenttest.Script(t, "claude", `
 {
   echo "GH_TOKEN=[$GH_TOKEN]"
   gh api user

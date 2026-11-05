@@ -6,15 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -48,12 +49,20 @@ func quietFeature(h *harness, n int, at time.Time) {
 }
 
 // lastPMPrompt returns the task prompt of the product manager session that
-// ran last. proposals_test.go's pmPrompt sorts the session directories
-// instead, whose names carry a real-time stamp at one-second resolution: two
-// sessions in the same second sort at random, so a test that runs more than
-// one product manager session reads the order out of the fake-order file.
+// ran last. Fixture sessions are read from Record; role-script sessions use
+// the fake-order file because session directory timestamps have one-second
+// resolution and do not establish chronological order.
 func lastPMPrompt(t *testing.T, h *harness) string {
 	t.Helper()
+	if h.fixture != nil {
+		invocations := h.fixture.Record(t).Sessions
+		for i := len(invocations) - 1; i >= 0; i-- {
+			if invocations[i].Environment[session.EnvRole] == config.RoleProductManager {
+				return invocations[i].Prompt
+			}
+		}
+		t.Fatal("no product manager session ran")
+	}
 	dirs := h.sessionOrder()
 	for i := len(dirs) - 1; i >= 0; i-- {
 		if strings.Contains(dirs[i], "-"+config.RoleProductManager+"-") {
@@ -73,6 +82,7 @@ func lastPMPrompt(t *testing.T, h *harness) string {
 func TestAFeatureWhoseWorkIsDoneWakesTheProductManagerOnce(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
 	// The fake answers the parent query for issue 1 with feature #5.
@@ -185,6 +195,7 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 func TestAFeatureThatGainsASubIssueIsReportedAgain(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	h.gh.Parents = map[int]int{1: 5, 7: 5}
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
@@ -237,6 +248,7 @@ func TestAFeatureThatGainsASubIssueIsReportedAgain(t *testing.T) {
 func TestAnEmptyParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
 	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
@@ -281,6 +293,7 @@ func TestAnEmptyParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 func TestAFailedProductManagerSessionDoesNotSpendTheReport(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn(), agenttest.Turn{End: agenttest.TurnRateLimited, ResetAt: now.Add(time.Hour), ResultText: "You've hit your session limit"}, doneTurn())
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
 	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
@@ -289,7 +302,6 @@ func TestAFailedProductManagerSessionDoesNotSpendTheReport(t *testing.T) {
 	// The last work item closes while the account is out of capacity: the
 	// session dies without reporting an outcome, the way one that could not
 	// start does.
-	t.Setenv("FAKE_LIMIT", strconv.FormatInt(now.Add(time.Hour).Unix(), 10))
 	h.gh.Issues[1].State = "CLOSED"
 	nextPass(t, h)
 	is, err := h.store.Issue(5)
@@ -301,7 +313,6 @@ func TestAFailedProductManagerSessionDoesNotSpendTheReport(t *testing.T) {
 	}
 
 	// With capacity back, the finished feature is still presented.
-	t.Setenv("FAKE_LIMIT", "")
 	h.clock.advance(3 * time.Hour)
 	forcePoll(h)
 	runPass(t, h)
@@ -318,6 +329,7 @@ func TestAFailedProductManagerSessionDoesNotSpendTheReport(t *testing.T) {
 func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn())
 	h.gh.Parents = map[int]int{1: 5, 7: 5}
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
@@ -367,6 +379,7 @@ func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.useSessions("claude", doneTurn(), doneTurn(), agenttest.Turn{End: agenttest.TurnRateLimited, ResetAt: now.Add(10 * time.Minute), ResultText: "You've hit your session limit"}, doneTurn())
 	h.gh.Parents = map[int]int{1: 5, 7: 5}
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
@@ -385,7 +398,6 @@ func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
 		Subject: "how is Exports going", Body: "?"}); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FAKE_LIMIT", strconv.FormatInt(now.Add(10*time.Minute).Unix(), 10))
 	nextPass(t, h)
 	is, err := h.store.Issue(5)
 	if err != nil {
@@ -400,7 +412,6 @@ func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
 
 	// Closing it reports the feature complete again, well inside
 	// product_manager_interval so nothing but the trigger can be the wake.
-	t.Setenv("FAKE_LIMIT", "")
 	h.clock.advance(15 * time.Minute)
 	h.gh.Issues[7].State = "CLOSED"
 	forcePoll(h)

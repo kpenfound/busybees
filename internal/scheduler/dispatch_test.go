@@ -455,6 +455,7 @@ func TestPriorityDoesNotJumpAResumedIssue(t *testing.T) {
 // size label, so reconcile's edits leave it alone.
 func TestReconcileKeepsThePriorityLabel(t *testing.T) {
 	h := newHarness(t, managersTOML)
+	h.useSessions("claude", doneTurn())
 	base := time.Now().Add(-24 * time.Hour)
 	// An issue with no state label and neither bees:feature nor bees:feedback
 	// that a person marked priority: reconcile hands it to the product manager

@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/session"
 )
@@ -72,6 +74,7 @@ func TestAMarkerlessCommentIsReportedOnce(t *testing.T) {
 // calling the check by hand.
 func TestASessionsCommentsAreCheckedWhenItEnds(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
+	h.useSessions("claude", agenttest.Turn{ResultText: "ok", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: OutcomePROpened, Work: ghwork.New(0, fakePR)}})
 	h.sched.gh.ActsAs = "busybees-bot"
 	seedComments(h, 1, commentJSON(42, "busybees-bot", "Closing this.", time.Now().Add(time.Minute)))
 
@@ -143,6 +146,7 @@ func TestCommentTargetsAreTheWorkItemAndTheIssuesTouched(t *testing.T) {
 // own new pull request is covered by the session that made it.
 func TestThePullRequestASessionOpensIsAudited(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
+	h.useSessions("claude", agenttest.Turn{ResultText: "ok", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: OutcomePROpened, Work: ghwork.New(0, fakePR)}})
 	h.sched.gh.ActsAs = "busybees-bot"
 	seedComments(h, fakePR, commentJSON(42, "busybees-bot", "Opened.", time.Now().Add(time.Minute)))
 

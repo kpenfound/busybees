@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/review"
 )
@@ -120,7 +121,7 @@ func runRoleCase(t *testing.T, role, caseTOML string, files map[string]string, t
 		t.Fatal(err)
 	}
 	r, console := testRunner(t)
-	r.Grader = &review.CLIAgent{ClaudeBin: os.Args[0]}
+	r.Grader = &review.CLIAgent{ClaudeBin: agenttest.Session(t, "claude", agenttest.Turn{ResultText: `{"score": 0.9, "reasons": "the fake grader read the rubric"}`, SessionID: "sid-review"}).Bin}
 	if tune != nil {
 		tune(r)
 	}
@@ -219,7 +220,9 @@ func TestRoleCaseChecksLabelsMailAndAClosedIssue(t *testing.T) {
 // A case that declares checks the role does not meet fails on each of them,
 // and the table says what was observed rather than what was asked for.
 func TestRoleCaseFailsEveryCheckTheRoleDidNotMeet(t *testing.T) {
-	rep, res := runRoleCase(t, config.RoleProjectManager, projectManagerCase, answerRepo(), nil)
+	rep, res := runRoleCase(t, config.RoleProjectManager, projectManagerCase, answerRepo(), func(r *Runner) {
+		r.ClaudeBin = agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok", SessionID: "sid", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: "done", Note: "ok"}}).Bin
+	})
 	if res.Pass || rep.Pass() {
 		t.Fatalf("a project manager that did nothing passed: %+v", res)
 	}
@@ -323,6 +326,12 @@ func TestTheGraderRunsOnEveryProvider(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			g := &review.CLIAgent{Provider: provider, ClaudeBin: os.Args[0], CodexBin: os.Args[0], OpenCodeBin: os.Args[0], PiBin: os.Args[0]}
+			switch provider {
+			case "", config.AgentClaude:
+				g.ClaudeBin = agenttest.Session(t, "claude", agenttest.Turn{ResultText: `{"score": 0.9, "reasons": "the fake grader read the rubric"}`, SessionID: "sid-review"}).Bin
+			case config.AgentCodex:
+				g.CodexBin = agenttest.Session(t, "codex", agenttest.Turn{ResultText: `{"score": 0.9, "reasons": "the fake grader read the rubric"}`, SessionID: "thread-fake"}).Bin
+			}
 			_, res := runRoleCase(t, config.RoleDeveloper, developerCase, answerRepo(), func(r *Runner) { r.Grader = g })
 			graded := checkNamed(t, res, "the pull request says what changed")
 			if !graded.Pass {
@@ -407,7 +416,9 @@ missing = ["bees:triage", "bees:ready"]
 // Scoping with roles.<name>.enabled instead would send it to the ready
 // queue, because reconcile reads the configuration and not the scope.
 func TestRoleCaseLeavesTheFactorysRoutingAlone(t *testing.T) {
-	_, res := runRoleCase(t, config.RoleProjectManager, routingCase, answerRepo(), nil)
+	_, res := runRoleCase(t, config.RoleProjectManager, routingCase, answerRepo(), func(r *Runner) {
+		r.ClaudeBin = agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok", SessionID: "sid", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: "done", Note: "ok"}}).Bin
+	})
 	if !res.Pass || res.Stop != StopDone || res.Error != "" {
 		t.Fatalf("result: %+v", res)
 	}
@@ -421,10 +432,11 @@ func TestRoleCaseLeavesTheFactorysRoutingAlone(t *testing.T) {
 // The case's timeout bounds a per-role run the way it bounds a
 // whole-factory one: the session still running is stopped, not waited for.
 func TestRoleCaseStopsAtTheTimeout(t *testing.T) {
-	t.Setenv("FAKE_DEV_HANG", "60")
 	start := time.Now()
 	_, res := runRoleCase(t, config.RoleDeveloper,
-		strings.Replace(developerCase, `timeout = "2m"`, `timeout = "3s"`, 1), answerRepo(), nil)
+		strings.Replace(developerCase, `timeout = "2m"`, `timeout = "3s"`, 1), answerRepo(), func(r *Runner) {
+			r.ClaudeBin = agenttest.Session(t, "claude", agenttest.Turn{End: agenttest.TurnNeverEnds}).Bin
+		})
 	if res.Pass || res.Stop != StopTimeout {
 		t.Fatalf("result: %+v", res)
 	}
@@ -440,9 +452,10 @@ func TestRoleCaseStopsAtTheTimeout(t *testing.T) {
 // The case's budget bounds it too: the session's cost passes max_cost and
 // the run stops there.
 func TestRoleCaseStopsAtTheBudget(t *testing.T) {
-	t.Setenv("FAKE_COST", "5")
 	_, res := runRoleCase(t, config.RoleProjectManager,
-		strings.Replace(projectManagerCase, "max_cost = 3", "max_cost = 1", 1), answerRepo(), nil)
+		strings.Replace(projectManagerCase, "max_cost = 3", "max_cost = 1", 1), answerRepo(), func(r *Runner) {
+			r.ClaudeBin = agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok", SessionID: "sid", NumTurns: 2, CostUSD: 5, Outcome: &agenttest.SessionOutcome{Status: "done", Note: "ok"}}).Bin
+		})
 	if res.Pass || res.Stop != StopBudget || res.CostUSD < 1 {
 		t.Fatalf("result: %+v", res)
 	}
@@ -452,7 +465,6 @@ func TestRoleCaseStopsAtTheBudget(t *testing.T) {
 // to a person, and the run still ends as done: a case can declare that
 // outcome and pass on it.
 func TestRoleCaseCanExpectAFailedDeveloper(t *testing.T) {
-	t.Setenv("FAKE_DEV_FAIL", "1")
 	_, res := runRoleCase(t, config.RoleDeveloper, `
 issue = 1
 timeout = "2m"
@@ -470,7 +482,9 @@ outcome = "failed"
 [[expect.labels]]
 issue = 1
 has = ["bees:needs-human"]
-`, answerRepo(), nil)
+`, answerRepo(), func(r *Runner) {
+		r.ClaudeBin = agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok", SessionID: "sid", NumTurns: 2, CostUSD: 0.01, Outcome: &agenttest.SessionOutcome{Status: "failed", Note: "cannot build"}}).Bin
+	})
 	if !res.Pass || res.Stop != StopDone || res.Error != "" {
 		t.Fatalf("result: %+v", res)
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/agentcore/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 )
@@ -19,7 +20,7 @@ import (
 // where a reference that expands to nothing is an error. The name reaches
 // the session with the value the scheduler resolved, only with the neo4j
 // backend: on the file backend nothing reads it and the secret stays home.
-// sessionEnvWithNotes' fakeClaude only dumps its environment; the
+// sessionEnvWithNotes' fixture records its environment; the
 // config.LoadNotes calls below are this test's own stand-in for the
 // in-session `bees mcp serve`, not a run of the real one.
 func TestTheNotesKeyVariableReachesTheSession(t *testing.T) {
@@ -63,16 +64,12 @@ func TestTheNotesKeyVariableReachesTheSession(t *testing.T) {
 	}
 }
 
-// sessionEnvWithNotes runs a fake claude that dumps its environment, with
+// sessionEnvWithNotes runs a claude fixture that records its environment, with
 // [notes] set on the runner, and returns what it saw.
 func sessionEnvWithNotes(t *testing.T, notes config.Notes) map[string]string {
 	t.Helper()
-	dump := filepath.Join(t.TempDir(), "env.txt")
-	bin := fakeClaude(t, `
-env > `+dump+`
-echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
-`)
-	r := newRunner(t, bin)
+	fixture := agenttest.Session(t, "claude", agenttest.Turn{ResultText: "ok"})
+	r := newRunner(t, fixture.Bin)
 	r.Notes = notes
 	if _, err := r.Run(context.Background(), Request{
 		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
@@ -80,15 +77,5 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(dump)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := map[string]string{}
-	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
-		if k, v, ok := strings.Cut(line, "="); ok {
-			out[k] = v
-		}
-	}
-	return out
+	return fixture.Record(t).Sessions[0].Environment
 }

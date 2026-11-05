@@ -1,11 +1,13 @@
 package scheduler
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kpenfound/agentcore/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 )
@@ -17,8 +19,8 @@ import (
 func TestSessionLimitPausesDeveloperDispatch(t *testing.T) {
 	now := time.Date(2026, 8, 30, 23, 13, 0, 0, time.UTC)
 	resets := now.Add(37 * time.Minute)
-	t.Setenv("FAKE_LIMIT", strconv.FormatInt(resets.Unix(), 10))
 	h := newHarnessAt(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\nretries = 2\nretry_delay = \"1ms\"\n", 1), now)
+	h.useSessions("claude", agenttest.Turn{End: agenttest.TurnRateLimited, ResetAt: resets, ResultText: "You've hit your session limit", CostUSD: 0.01})
 	seedReady(h, 1, "s", now)
 
 	runPass(t, h)
@@ -56,7 +58,8 @@ func TestSessionLimitPausesDeveloperDispatch(t *testing.T) {
 
 	// Past the reset time: dispatch resumes and the lift is reported. The
 	// limit is over, so the sessions do their work again.
-	t.Setenv("FAKE_LIMIT", "")
+	// Subsequent sessions open PRs and run reviews through the role script.
+	h.sched.runner.ClaudeBin = os.Args[0]
 	h.clock.advance(40 * time.Minute)
 	forcePoll(h)
 	runPass(t, h)
@@ -78,9 +81,9 @@ func TestSessionLimitPausesDeveloperDispatch(t *testing.T) {
 // reset time, so the pause is scheduler.rate_limit_backoff long.
 func TestSessionLimitPausesSingletonDispatch(t *testing.T) {
 	now := time.Date(2026, 8, 30, 23, 13, 0, 0, time.UTC)
-	t.Setenv("FAKE_LIMIT", "none")
 	toml := strings.Replace(baseTOML, "[scheduler]\n", "[scheduler]\nrate_limit_backoff = \"20m\"\n", 1)
 	h := newHarnessAt(t, toml, now)
+	h.useSessions("claude", agenttest.Turn{End: agenttest.TurnRateLimited, ResultText: "You've hit your session limit", CostUSD: 0.01})
 	h.sched.OnlyRoles = map[string]bool{config.RoleProjectManager: true}
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Needs triage", Body: "hi", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: now}
