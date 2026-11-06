@@ -1425,7 +1425,7 @@ its command must be in the template; a remote one is reached as configured,
 and `sbx mcp add` registrations are not used.
 
 Written to the sbx CLI reference and not run for this page: the sandbox is
-created with `sbx create --quiet --name <session> --skills off <agent>`,
+created with `sbx create --no-progress --name <session> --skills off <agent>`,
 the command runs through
 `sbx exec --interactive --workdir <worktree> --env <name>...` with the
 prompt on stdin, and `sbx rm --force` removes the sandbox when the session
